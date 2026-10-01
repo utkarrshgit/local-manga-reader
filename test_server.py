@@ -192,6 +192,12 @@ class TestHTTPHandler(unittest.TestCase):
         self.assertIn(b"reader-empty", body)
         # Phase 4 bookmark button
         self.assertIn(b"btn-reader-bookmark", body)
+        # Phase 5 fullscreen & chapter navigation
+        self.assertIn(b"btn-reader-fullscreen", body)
+        self.assertIn(b"btn-reader-prev", body)
+        self.assertIn(b"btn-reader-next", body)
+        self.assertIn(b"btn-reader-footer-prev", body)
+        self.assertIn(b"btn-reader-footer-next", body)
 
     def test_serve_static_css(self):
         headers, body = self._simulate_get("/style.css")
@@ -207,6 +213,11 @@ class TestHTTPHandler(unittest.TestCase):
         # Phase 4 bookmark CSS
         self.assertIn(b"btn-bookmark", body)
         self.assertIn(b"badge-bookmark", body)
+        # Phase 5 polish CSS
+        self.assertIn(b"object-fit: contain", body)
+        self.assertIn(b"btn-fullscreen", body)
+        self.assertIn(b"btn-chapter-nav", body)
+        self.assertIn(b"reader-chapter-pagination", body)
 
     def test_serve_static_js(self):
         headers, body = self._simulate_get("/app.js")
@@ -223,6 +234,11 @@ class TestHTTPHandler(unittest.TestCase):
         self.assertIn(b"fetchReaderData", body)
         self.assertIn(b"toggleBookmark", body)
         self.assertIn(b"btnReaderBookmark", body)
+        # Phase 5 reader JS
+        self.assertIn(b"toggleFullscreen", body)
+        self.assertIn(b"updateChapterNavButtons", body)
+        self.assertIn(b"ArrowLeft", body)
+        self.assertIn(b"ArrowRight", body)
 
     def test_api_status(self):
         headers, body = self._simulate_get("/api/status")

@@ -1,5 +1,5 @@
 /**
- * Local Manga Reader - Vanilla Frontend (Phase 4: Progress & Bookmarks)
+ * Local Manga Reader - Vanilla Frontend (Phase 5: Safari Polish & UX)
  */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -29,8 +29,17 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnReaderBack = document.getElementById("btn-reader-back");
   const btnReaderBottomBack = document.getElementById("btn-reader-bottom-back");
   const btnReaderBookmark = document.getElementById("btn-reader-bookmark");
+  const btnReaderFullscreen = document.getElementById("btn-reader-fullscreen");
+  const btnReaderPrev = document.getElementById("btn-reader-prev");
+  const btnReaderNext = document.getElementById("btn-reader-next");
+  const btnReaderFooterPrev = document.getElementById("btn-reader-footer-prev");
+  const btnReaderFooterNext = document.getElementById("btn-reader-footer-next");
   const btnStyleSpaced = document.getElementById("btn-style-spaced");
   const btnStyleSeamless = document.getElementById("btn-style-seamless");
+
+  // Fullscreen icons
+  const iconFullscreenEnter = btnReaderFullscreen ? btnReaderFullscreen.querySelector(".icon-fullscreen-enter") : null;
+  const iconFullscreenExit = btnReaderFullscreen ? btnReaderFullscreen.querySelector(".icon-fullscreen-exit") : null;
 
   // DOM Elements - Header & Navigation
   const breadcrumbs = document.getElementById("breadcrumbs");
@@ -43,6 +52,8 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentChapter = null;
   let currentSeriesBookmarks = new Set();
   let currentSeriesProgress = {};
+  let currentPrevChapter = null;
+  let currentNextChapter = null;
 
   // Reading progress observer state
   let readerObserver = null;
@@ -83,6 +94,8 @@ document.addEventListener("DOMContentLoaded", () => {
         clearTimeout(saveProgressTimeout);
         saveProgressTimeout = null;
       }
+      currentPrevChapter = null;
+      currentNextChapter = null;
     }
     window.scrollTo({ top: 0, behavior: "instant" });
   }
@@ -102,6 +115,72 @@ document.addEventListener("DOMContentLoaded", () => {
       readerContainer.classList.add("mode-spaced");
       btnStyleSpaced.classList.add("active");
       btnStyleSeamless.classList.remove("active");
+    }
+  }
+
+  // Fullscreen Helper Functions
+  function isFullscreenActive() {
+    return !!(
+      document.fullscreenElement ||
+      document.webkitFullscreenElement ||
+      document.mozFullScreenElement ||
+      document.msFullscreenElement
+    );
+  }
+
+  function updateFullscreenUI() {
+    if (!btnReaderFullscreen) return;
+    const active = isFullscreenActive();
+    if (iconFullscreenEnter && iconFullscreenExit) {
+      iconFullscreenEnter.classList.toggle("hidden", active);
+      iconFullscreenExit.classList.toggle("hidden", !active);
+    }
+    btnReaderFullscreen.title = active ? "Exit fullscreen (F)" : "Toggle fullscreen (F)";
+    btnReaderFullscreen.setAttribute("aria-label", active ? "Exit fullscreen" : "Toggle fullscreen");
+  }
+
+  function toggleFullscreen() {
+    const doc = document;
+    const docEl = document.documentElement;
+
+    if (!isFullscreenActive()) {
+      if (docEl.requestFullscreen) {
+        docEl.requestFullscreen().catch(() => {});
+      } else if (docEl.webkitRequestFullscreen) {
+        docEl.webkitRequestFullscreen();
+      } else if (docEl.mozRequestFullScreen) {
+        docEl.mozRequestFullScreen();
+      } else if (docEl.msRequestFullscreen) {
+        docEl.msRequestFullscreen();
+      }
+    } else {
+      if (doc.exitFullscreen) {
+        doc.exitFullscreen().catch(() => {});
+      } else if (doc.webkitExitFullscreen) {
+        doc.webkitExitFullscreen();
+      } else if (doc.mozCancelFullScreen) {
+        doc.mozCancelFullScreen();
+      } else if (doc.msExitFullscreen) {
+        doc.msExitFullscreen();
+      }
+    }
+  }
+
+  // Check if Fullscreen is supported
+  const isFullscreenSupported = !!(
+    document.fullscreenEnabled ||
+    document.webkitFullscreenEnabled ||
+    document.documentElement.requestFullscreen ||
+    document.documentElement.webkitRequestFullscreen
+  );
+
+  if (btnReaderFullscreen) {
+    if (!isFullscreenSupported) {
+      btnReaderFullscreen.classList.add("hidden");
+    } else {
+      btnReaderFullscreen.addEventListener("click", toggleFullscreen);
+      document.addEventListener("fullscreenchange", updateFullscreenUI);
+      document.addEventListener("webkitfullscreenchange", updateFullscreenUI);
     }
   }
 
@@ -167,8 +246,37 @@ document.addEventListener("DOMContentLoaded", () => {
   function updateReaderBookmarkButton(chapterName) {
     const isBookmarked = currentSeriesBookmarks.has(chapterName);
     btnReaderBookmark.classList.toggle("bookmarked", isBookmarked);
-    btnReaderBookmark.title = isBookmarked ? "Remove bookmark" : "Bookmark this chapter";
+    btnReaderBookmark.title = isBookmarked ? "Remove bookmark (B)" : "Bookmark this chapter (B)";
     btnReaderBookmark.setAttribute("aria-label", isBookmarked ? "Remove bookmark" : "Bookmark this chapter");
+  }
+
+  // Update Previous / Next Chapter Buttons State
+  function updateChapterNavButtons() {
+    const hasPrev = !!currentPrevChapter;
+    const hasNext = !!currentNextChapter;
+
+    if (btnReaderPrev) {
+      btnReaderPrev.disabled = !hasPrev;
+      btnReaderPrev.title = hasPrev ? `Previous: ${currentPrevChapter} (←)` : "No previous chapter";
+    }
+    if (btnReaderFooterPrev) {
+      btnReaderFooterPrev.disabled = !hasPrev;
+    }
+
+    if (btnReaderNext) {
+      btnReaderNext.disabled = !hasNext;
+      btnReaderNext.title = hasNext ? `Next: ${currentNextChapter} (→)` : "No next chapter";
+    }
+    if (btnReaderFooterNext) {
+      btnReaderFooterNext.disabled = !hasNext;
+    }
+  }
+
+  // Navigate to Chapter Helper
+  function navigateToChapter(chapter) {
+    if (currentSeries && chapter) {
+      window.location.hash = `#/read/${encodeURIComponent(currentSeries)}/${encodeURIComponent(chapter)}`;
+    }
   }
 
   // 1. Load Library View
@@ -320,7 +428,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // 3. Load Real Vertical Scroll Reader View with Reading Progress and Bookmark
+  // 3. Load Real Vertical Scroll Reader View with Reading Progress, Bookmark & Navigation
   async function loadReader(seriesName, chapterName) {
     currentSeries = seriesName;
     currentChapter = chapterName;
@@ -354,9 +462,10 @@ document.addEventListener("DOMContentLoaded", () => {
     ]);
 
     try {
-      const [imagesRes, readerData] = await Promise.all([
+      const [imagesRes, readerData, chaptersData] = await Promise.all([
         fetch(`/api/images?series=${encodeURIComponent(seriesName)}&chapter=${encodeURIComponent(chapterName)}`),
-        fetchReaderData(seriesName)
+        fetchReaderData(seriesName),
+        fetch(`/api/chapters?series=${encodeURIComponent(seriesName)}`).then((r) => (r.ok ? r.json() : { chapters: [] })).catch(() => ({ chapters: [] }))
       ]);
 
       if (!imagesRes.ok) throw new Error(`HTTP error ${imagesRes.status}`);
@@ -365,7 +474,13 @@ document.addEventListener("DOMContentLoaded", () => {
       currentSeriesBookmarks = new Set(readerData.bookmarks || []);
       currentSeriesProgress = readerData.progress || {};
 
-      // Update Reader Bookmark Button
+      // Determine Previous & Next Chapters from natural ordering
+      const chapterList = (chaptersData.chapters || []).map((c) => c.name);
+      const currentIndex = chapterList.indexOf(chapterName);
+      currentPrevChapter = currentIndex > 0 ? chapterList[currentIndex - 1] : null;
+      currentNextChapter = currentIndex >= 0 && currentIndex < chapterList.length - 1 ? chapterList[currentIndex + 1] : null;
+
+      updateChapterNavButtons();
       updateReaderBookmarkButton(chapterName);
 
       const images = data.images || [];
@@ -551,6 +666,20 @@ document.addEventListener("DOMContentLoaded", () => {
   btnReaderBack.addEventListener("click", navigateBackToChapters);
   btnReaderBottomBack.addEventListener("click", navigateBackToChapters);
 
+  // Reader Prev / Next Buttons
+  if (btnReaderPrev) {
+    btnReaderPrev.addEventListener("click", () => navigateToChapter(currentPrevChapter));
+  }
+  if (btnReaderFooterPrev) {
+    btnReaderFooterPrev.addEventListener("click", () => navigateToChapter(currentPrevChapter));
+  }
+  if (btnReaderNext) {
+    btnReaderNext.addEventListener("click", () => navigateToChapter(currentNextChapter));
+  }
+  if (btnReaderFooterNext) {
+    btnReaderFooterNext.addEventListener("click", () => navigateToChapter(currentNextChapter));
+  }
+
   // Reader Bookmark Toggle Button in Header
   btnReaderBookmark.addEventListener("click", async () => {
     if (!currentSeries || !currentChapter) return;
@@ -568,6 +697,46 @@ document.addEventListener("DOMContentLoaded", () => {
 
   btnStyleSeamless.addEventListener("click", () => {
     applyReadingStyle("seamless");
+  });
+
+  // Lightweight Keyboard Shortcuts
+  window.addEventListener("keydown", (e) => {
+    // Ignore if user is typing in form controls or editable elements
+    const active = document.activeElement;
+    if (active) {
+      const tag = active.tagName ? active.tagName.toLowerCase() : "";
+      if (tag === "input" || tag === "textarea" || tag === "select" || active.isContentEditable) {
+        return;
+      }
+    }
+
+    // Ignore if system modifier keys are pressed
+    if (e.metaKey || e.ctrlKey || e.altKey) {
+      return;
+    }
+
+    // Only active when Reader View is open
+    if (viewReader.classList.contains("hidden")) {
+      return;
+    }
+
+    if (e.key === "ArrowLeft") {
+      if (currentPrevChapter) {
+        e.preventDefault();
+        navigateToChapter(currentPrevChapter);
+      }
+    } else if (e.key === "ArrowRight") {
+      if (currentNextChapter) {
+        e.preventDefault();
+        navigateToChapter(currentNextChapter);
+      }
+    } else if (e.key === "f" || e.key === "F") {
+      e.preventDefault();
+      toggleFullscreen();
+    } else if (e.key === "b" || e.key === "B") {
+      e.preventDefault();
+      btnReaderBookmark.click();
+    }
   });
 
   // Initial load

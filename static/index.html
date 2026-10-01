@@ -114,13 +114,37 @@
               <span class="reader-sep">/</span>
               <span class="reader-chapter" id="reader-chapter-name">Chapter</span>
             </div>
+
+            <!-- Compact Header Chapter Nav -->
+            <div class="reader-header-nav" role="group" aria-label="Quick chapter navigation">
+              <button id="btn-reader-prev" class="btn btn-icon btn-sm btn-chapter-nav" title="Previous chapter (←)" aria-label="Previous chapter">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M15 18l-6-6 6-6"/>
+                </svg>
+              </button>
+              <button id="btn-reader-next" class="btn btn-icon btn-sm btn-chapter-nav" title="Next chapter (→)" aria-label="Next chapter">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M9 18l6-6-6-6"/>
+                </svg>
+              </button>
+            </div>
           </div>
 
           <div class="reader-header-right">
             <!-- Bookmark Control -->
-            <button id="btn-reader-bookmark" class="btn btn-icon btn-bookmark" title="Bookmark chapter" aria-label="Bookmark chapter">
+            <button id="btn-reader-bookmark" class="btn btn-icon btn-bookmark" title="Bookmark chapter (B)" aria-label="Bookmark chapter">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="bookmark-icon">
                 <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+              </svg>
+            </button>
+
+            <!-- Fullscreen Control -->
+            <button id="btn-reader-fullscreen" class="btn btn-icon btn-fullscreen" title="Toggle fullscreen (F)" aria-label="Toggle fullscreen">
+              <svg class="icon-fullscreen-enter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+              </svg>
+              <svg class="icon-fullscreen-exit hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
               </svg>
             </button>
 
@@ -163,9 +187,23 @@
       <div id="reader-footer" class="reader-footer hidden">
         <div class="reader-footer-content">
           <p class="reader-end-tag">End of chapter</p>
-          <button id="btn-reader-bottom-back" class="btn btn-secondary">
-            Back to Chapters
-          </button>
+          <div class="reader-chapter-pagination">
+            <button id="btn-reader-footer-prev" class="btn btn-secondary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M15 18l-6-6 6-6"/>
+              </svg>
+              Previous Chapter
+            </button>
+            <button id="btn-reader-bottom-back" class="btn btn-secondary">
+              Chapters List
+            </button>
+            <button id="btn-reader-footer-next" class="btn btn-secondary">
+              Next Chapter
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 18l6-6-6-6"/>
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
     </section>
