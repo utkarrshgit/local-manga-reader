@@ -1,35 +1,46 @@
 /**
- * Local Manga Reader - Vanilla Frontend (Phase 2)
+ * Local Manga Reader - Vanilla Frontend (Phase 3)
  */
 
 document.addEventListener("DOMContentLoaded", () => {
-  // DOM Elements
+  // DOM Elements - Views
   const viewLibrary = document.getElementById("view-library");
   const viewChapters = document.getElementById("view-chapters");
-  const viewPlaceholder = document.getElementById("view-placeholder");
+  const viewReader = document.getElementById("view-reader");
 
+  // DOM Elements - Library
   const seriesGrid = document.getElementById("series-grid");
   const libraryEmpty = document.getElementById("library-empty");
   const librarySubtitle = document.getElementById("library-subtitle");
 
+  // DOM Elements - Chapters
   const chaptersList = document.getElementById("chapters-list");
   const chaptersEmpty = document.getElementById("chapters-empty");
   const seriesTitle = document.getElementById("series-title");
   const seriesMeta = document.getElementById("series-meta");
 
-  const placeholderChapterTitle = document.getElementById("placeholder-chapter-title");
-  const placeholderSeriesTitle = document.getElementById("placeholder-series-title");
-  const placeholderPageCount = document.getElementById("placeholder-page-count");
+  // DOM Elements - Reader
+  const readerSeriesName = document.getElementById("reader-series-name");
+  const readerChapterName = document.getElementById("reader-chapter-name");
+  const readerContainer = document.getElementById("reader-container");
+  const readerLoading = document.getElementById("reader-loading");
+  const readerFooter = document.getElementById("reader-footer");
+  const btnReaderBack = document.getElementById("btn-reader-back");
+  const btnReaderBottomBack = document.getElementById("btn-reader-bottom-back");
+  const btnStyleSpaced = document.getElementById("btn-style-spaced");
+  const btnStyleSeamless = document.getElementById("btn-style-seamless");
 
+  // DOM Elements - Header & Navigation
   const breadcrumbs = document.getElementById("breadcrumbs");
   const statusBanner = document.getElementById("status-banner");
   const btnRefresh = document.getElementById("btn-refresh");
   const btnBackToLibrary = document.getElementById("btn-back-to-library");
-  const btnBackToChapters = document.getElementById("btn-back-to-chapters");
 
   // State
   let currentSeries = null;
   let currentChapter = null;
+  // Persist reading style across chapters within the current session
+  let currentReadingStyle = sessionStorage.getItem("manga_reader_style") || "spaced";
 
   // Notification helper
   function showError(message) {
@@ -48,8 +59,26 @@ document.addEventListener("DOMContentLoaded", () => {
     clearError();
     viewLibrary.classList.toggle("hidden", viewName !== "library");
     viewChapters.classList.toggle("hidden", viewName !== "chapters");
-    viewPlaceholder.classList.toggle("hidden", viewName !== "placeholder");
+    viewReader.classList.toggle("hidden", viewName !== "reader");
     window.scrollTo({ top: 0, behavior: "instant" });
+  }
+
+  // Reading Style Manager
+  function applyReadingStyle(style) {
+    currentReadingStyle = style;
+    sessionStorage.setItem("manga_reader_style", style);
+
+    if (style === "seamless") {
+      readerContainer.classList.remove("mode-spaced");
+      readerContainer.classList.add("mode-seamless");
+      btnStyleSeamless.classList.add("active");
+      btnStyleSpaced.classList.remove("active");
+    } else {
+      readerContainer.classList.remove("mode-seamless");
+      readerContainer.classList.add("mode-spaced");
+      btnStyleSpaced.classList.add("active");
+      btnStyleSeamless.classList.remove("active");
+    }
   }
 
   // Breadcrumbs builder
@@ -77,7 +106,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // 1. Load Library
+  // 1. Load Library View
   async function loadLibrary() {
     switchView("library");
     updateBreadcrumbs([{ label: "Library" }]);
@@ -137,7 +166,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // 2. Load Chapters for Series
+  // 2. Load Chapters View
   async function loadChapters(seriesName) {
     currentSeries = seriesName;
     switchView("chapters");
@@ -201,15 +230,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // 3. Load Placeholder Chapter Page
-  async function loadPlaceholder(seriesName, chapterName) {
+  // 3. Load Real Vertical Scroll Reader View (Phase 3)
+  async function loadReader(seriesName, chapterName) {
     currentSeries = seriesName;
     currentChapter = chapterName;
-    switchView("placeholder");
+    switchView("reader");
 
-    placeholderSeriesTitle.textContent = seriesName;
-    placeholderChapterTitle.textContent = chapterName;
-    placeholderPageCount.textContent = "Checking images...";
+    readerSeriesName.textContent = seriesName;
+    readerChapterName.textContent = chapterName;
+    readerContainer.innerHTML = "";
+    readerFooter.classList.add("hidden");
+    readerLoading.classList.remove("hidden");
+
+    // Apply stored reading style (Spaced vs Seamless)
+    applyReadingStyle(currentReadingStyle);
 
     updateBreadcrumbs([
       { label: "Library", href: "#/" },
@@ -221,11 +255,39 @@ document.addEventListener("DOMContentLoaded", () => {
       const res = await fetch(`/api/images?series=${encodeURIComponent(seriesName)}&chapter=${encodeURIComponent(chapterName)}`);
       if (!res.ok) throw new Error(`HTTP error ${res.status}`);
       const data = await res.json();
-      const count = data.image_count || 0;
-      placeholderPageCount.textContent = `${count} ${count === 1 ? "page" : "pages"} verified`;
+
+      const images = data.images || [];
+      readerLoading.classList.add("hidden");
+
+      if (images.length === 0) {
+        showError("No images found in this chapter.");
+        return;
+      }
+
+      // Render images vertically in natural order
+      images.forEach((img) => {
+        const pageDiv = document.createElement("div");
+        pageDiv.className = "reader-page";
+        // Identified by filename in DOM for Phase 4 progress tracking
+        pageDiv.id = `page-${img.filename}`;
+        pageDiv.dataset.filename = img.filename;
+
+        const imgEl = document.createElement("img");
+        imgEl.className = "reader-image";
+        imgEl.src = img.url;
+        imgEl.alt = img.filename;
+        imgEl.dataset.filename = img.filename;
+        imgEl.loading = "lazy";
+        imgEl.decoding = "async";
+
+        pageDiv.appendChild(imgEl);
+        readerContainer.appendChild(pageDiv);
+      });
+
+      readerFooter.classList.remove("hidden");
     } catch (err) {
-      showError(`Failed to verify chapter images: ${err.message}`);
-      placeholderPageCount.textContent = "Could not load image count";
+      readerLoading.classList.add("hidden");
+      showError(`Failed to load chapter images: ${err.message}`);
     }
   }
 
@@ -250,7 +312,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const series = decodeURIComponent(parts[0] || "");
       const chapter = decodeURIComponent(parts[1] || "");
       if (series && chapter) {
-        loadPlaceholder(series, chapter);
+        loadReader(series, chapter);
         return;
       }
     }
@@ -278,12 +340,25 @@ document.addEventListener("DOMContentLoaded", () => {
     window.location.hash = "#/";
   });
 
-  btnBackToChapters.addEventListener("click", () => {
+  // Reader Back Buttons
+  function navigateBackToChapters() {
     if (currentSeries) {
       window.location.hash = `#/series/${encodeURIComponent(currentSeries)}`;
     } else {
       window.location.hash = "#/";
     }
+  }
+
+  btnReaderBack.addEventListener("click", navigateBackToChapters);
+  btnReaderBottomBack.addEventListener("click", navigateBackToChapters);
+
+  // Style Toggle Buttons (Spaced vs Seamless)
+  btnStyleSpaced.addEventListener("click", () => {
+    applyReadingStyle("spaced");
+  });
+
+  btnStyleSeamless.addEventListener("click", () => {
+    applyReadingStyle("seamless");
   });
 
   // Initial load

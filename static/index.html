@@ -97,33 +97,57 @@
       </div>
     </section>
 
-    <!-- 3. Placeholder Chapter Reader View (Phase 3 placeholder) -->
-    <section id="view-placeholder" class="view hidden">
-      <div class="nav-bar">
-        <button id="btn-back-to-chapters" class="btn btn-secondary">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
-          Back to Chapters
-        </button>
+    <!-- 3. Real Vertical Scroll Reader View (Phase 3) -->
+    <section id="view-reader" class="view hidden">
+      <!-- Sticky Reader Control Header -->
+      <nav class="reader-header" aria-label="Reader Navigation">
+        <div class="reader-header-inner">
+          <div class="reader-header-left">
+            <button id="btn-reader-back" class="btn btn-secondary btn-sm" title="Back to chapters" aria-label="Back to chapters">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 12H5M12 19l-7-7 7-7"/>
+              </svg>
+              <span class="btn-label">Chapters</span>
+            </button>
+            <div class="reader-heading-group">
+              <span class="reader-series" id="reader-series-name">Series</span>
+              <span class="reader-sep">/</span>
+              <span class="reader-chapter" id="reader-chapter-name">Chapter</span>
+            </div>
+          </div>
+
+          <div class="reader-header-right">
+            <!-- Reading Style Segmented Control -->
+            <div class="style-toggle" role="group" aria-label="Reading style toggle">
+              <button id="btn-style-spaced" class="toggle-btn active" type="button" title="Spaced reading style (gap between pages)">
+                Spaced
+              </button>
+              <button id="btn-style-seamless" class="toggle-btn" type="button" title="Seamless reading style (no gap between pages)">
+                Seamless
+              </button>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      <!-- Reader Status / Loading Banner -->
+      <div id="reader-loading" class="reader-loading hidden">
+        <div class="spinner"></div>
+        <span>Loading images...</span>
       </div>
 
-      <div class="placeholder-card">
-        <div class="placeholder-icon-wrap">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <polygon points="5 3 19 12 5 21 5 3"/>
-          </svg>
-        </div>
-        <h2 id="placeholder-chapter-title">Chapter Name</h2>
-        <p class="placeholder-series" id="placeholder-series-title">Series Name</p>
-        
-        <div class="placeholder-meta" id="placeholder-meta">
-          <span class="badge" id="placeholder-page-count">0 pages</span>
-        </div>
+      <!-- Vertical Scrolling Pages Container -->
+      <div id="reader-container" class="reader-container mode-spaced">
+        <!-- Chapter images injected by JS -->
+      </div>
 
-        <div class="placeholder-notice">
-          <strong>Reader View Coming in Phase 3</strong>
-          <p>The backend successfully verified this chapter and its naturally-sorted images. In Phase 3, this screen will be replaced with the vertical scroll reader supporting Spaced Manga and Seamless Manhwa reading modes.</p>
+      <!-- Reader Footer -->
+      <div id="reader-footer" class="reader-footer hidden">
+        <div class="reader-footer-content">
+          <p class="reader-end-tag">End of chapter</p>
+          <button id="btn-reader-bottom-back" class="btn btn-secondary">
+            Back to Chapters
+          </button>
         </div>
       </div>
     </section>

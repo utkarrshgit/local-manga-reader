@@ -148,18 +148,31 @@ class TestHTTPHandler(unittest.TestCase):
         self.assertIn("200 OK", headers)
         self.assertIn("text/html", headers)
         self.assertIn(b"Manga Reader", body)
+        # Phase 3 reader elements
+        self.assertIn(b"view-reader", body)
+        self.assertIn(b"reader-container", body)
+        self.assertIn(b"btn-style-spaced", body)
+        self.assertIn(b"btn-style-seamless", body)
 
     def test_serve_static_css(self):
         headers, body = self._simulate_get("/style.css")
         self.assertIn("200 OK", headers)
         self.assertIn("text/css", headers)
         self.assertIn(b"--bg-primary", body)
+        # Phase 3 reader CSS
+        self.assertIn(b"mode-spaced", body)
+        self.assertIn(b"mode-seamless", body)
+        self.assertIn(b"reader-image", body)
 
     def test_serve_static_js(self):
         headers, body = self._simulate_get("/app.js")
         self.assertIn("200 OK", headers)
         self.assertIn("javascript", headers)
         self.assertIn(b"loadLibrary", body)
+        # Phase 3 reader JS
+        self.assertIn(b"loadReader", body)
+        self.assertIn(b"applyReadingStyle", body)
+        self.assertIn(b"dataset.filename", body)
 
     def test_api_status(self):
         headers, body = self._simulate_get("/api/status")
