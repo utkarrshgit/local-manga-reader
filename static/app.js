@@ -24,6 +24,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const readerChapterName = document.getElementById("reader-chapter-name");
   const readerContainer = document.getElementById("reader-container");
   const readerLoading = document.getElementById("reader-loading");
+  const readerEmpty = document.getElementById("reader-empty");
   const readerFooter = document.getElementById("reader-footer");
   const btnReaderBack = document.getElementById("btn-reader-back");
   const btnReaderBottomBack = document.getElementById("btn-reader-bottom-back");
@@ -60,6 +61,10 @@ document.addEventListener("DOMContentLoaded", () => {
     viewLibrary.classList.toggle("hidden", viewName !== "library");
     viewChapters.classList.toggle("hidden", viewName !== "chapters");
     viewReader.classList.toggle("hidden", viewName !== "reader");
+    if (viewName !== "reader") {
+      readerLoading.classList.add("hidden");
+      if (readerEmpty) readerEmpty.classList.add("hidden");
+    }
     window.scrollTo({ top: 0, behavior: "instant" });
   }
 
@@ -240,6 +245,7 @@ document.addEventListener("DOMContentLoaded", () => {
     readerChapterName.textContent = chapterName;
     readerContainer.innerHTML = "";
     readerFooter.classList.add("hidden");
+    if (readerEmpty) readerEmpty.classList.add("hidden");
     readerLoading.classList.remove("hidden");
 
     // Apply stored reading style (Spaced vs Seamless)
@@ -257,12 +263,17 @@ document.addEventListener("DOMContentLoaded", () => {
       const data = await res.json();
 
       const images = data.images || [];
+
+      // Loading completed: hide loading spinner
       readerLoading.classList.add("hidden");
 
       if (images.length === 0) {
+        if (readerEmpty) readerEmpty.classList.remove("hidden");
         showError("No images found in this chapter.");
         return;
       }
+
+      if (readerEmpty) readerEmpty.classList.add("hidden");
 
       // Render images vertically in natural order
       images.forEach((img) => {
@@ -287,6 +298,7 @@ document.addEventListener("DOMContentLoaded", () => {
       readerFooter.classList.remove("hidden");
     } catch (err) {
       readerLoading.classList.add("hidden");
+      if (readerEmpty) readerEmpty.classList.add("hidden");
       showError(`Failed to load chapter images: ${err.message}`);
     }
   }
