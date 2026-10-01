@@ -18,6 +18,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const chaptersEmpty = document.getElementById("chapters-empty");
   const seriesTitle = document.getElementById("series-title");
   const seriesMeta = document.getElementById("series-meta");
+  const seriesCoverThumbWrapper = document.getElementById("series-cover-thumb-wrapper");
+  const seriesCoverThumb = document.getElementById("series-cover-thumb");
 
   // DOM Elements - Reader
   const readerSeriesName = document.getElementById("reader-series-name");
@@ -97,6 +99,12 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       currentPrevChapter = null;
       currentNextChapter = null;
+    }
+
+    if (viewName !== "chapters" && seriesCoverThumbWrapper && seriesCoverThumb) {
+      seriesCoverThumbWrapper.classList.add("hidden");
+      seriesCoverThumb.classList.add("hidden");
+      seriesCoverThumb.src = "";
     }
     window.scrollTo({ top: 0, behavior: "instant" });
   }
@@ -390,6 +398,18 @@ document.addEventListener("DOMContentLoaded", () => {
       { label: "Library", href: "#/" },
       { label: seriesName }
     ]);
+
+    if (seriesCoverThumbWrapper && seriesCoverThumb) {
+      seriesCoverThumb.onload = () => {
+        seriesCoverThumb.classList.remove("hidden");
+        seriesCoverThumbWrapper.classList.remove("hidden");
+      };
+      seriesCoverThumb.onerror = () => {
+        seriesCoverThumb.classList.add("hidden");
+        seriesCoverThumbWrapper.classList.add("hidden");
+      };
+      seriesCoverThumb.src = `/api/cover?series=${encodeURIComponent(seriesName)}`;
+    }
 
     try {
       const [chaptersRes, readerData] = await Promise.all([
