@@ -348,7 +348,7 @@ class TestHTTPHandler(unittest.TestCase):
             reader_file.unlink()
 
         data = self.library.get_reader_data("OnePiece")
-        self.assertEqual(data, {"progress": {}, "bookmarks": []})
+        self.assertEqual(data, {"progress": {}, "bookmarks": [], "reader": {"style": "spaced"}})
 
     def test_malformed_json_handled_gracefully(self):
         """8. Malformed JSON is handled gracefully."""
@@ -357,7 +357,7 @@ class TestHTTPHandler(unittest.TestCase):
         (reader_dir / "reader_data.json").write_text("{corrupt-json", encoding="utf-8")
 
         data = self.library.get_reader_data("OnePiece")
-        self.assertEqual(data, {"progress": {}, "bookmarks": []})
+        self.assertEqual(data, {"progress": {}, "bookmarks": [], "reader": {"style": "spaced"}})
 
     def test_path_traversal_and_invalid_inputs_rejected(self):
         """9. Path traversal / invalid series or chapter input is rejected."""
@@ -388,6 +388,267 @@ class TestHTTPHandler(unittest.TestCase):
             "bookmarked": True
         })
         self.assertIn("400", headers)
+
+
+class TestPhase6Features(unittest.TestCase):
+    def setUp(self):
+        from server import MangaRequestHandler
+        self.MangaRequestHandler = MangaRequestHandler
+        self.temp_dir = tempfile.mkdtemp()
+        self.lib_path = Path(self.temp_dir).resolve()
+        self.library = MangaLibrary(str(self.lib_path))
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    def _simulate_get(self, path: str):
+        raw_request = f"GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n".encode("utf-8")
+        sock = MockSocket(raw_request)
+
+        class CustomHandler(self.MangaRequestHandler):
+            def __init__(self, request, client_address, server):
+                self.request = request
+                self.client_address = client_address
+                self.server = server
+                self.setup()
+                try:
+                    self.handle()
+                finally:
+                    self.finish()
+
+        CustomHandler.library = self.library
+        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler(sock, ("127.0.0.1", 8000), None)
+
+        output = sock.wfile.getvalue()
+        parts = output.split(b"\r\n\r\n", 1)
+        headers = parts[0].decode("utf-8", errors="replace")
+        body = parts[1] if len(parts) > 1 else b""
+        return headers, body
+
+    def _simulate_post(self, path: str, json_body: dict):
+        body_bytes = json.dumps(json_body).encode("utf-8")
+        raw_request = (
+            f"POST {path} HTTP/1.1\r\n"
+            f"Host: localhost\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: {len(body_bytes)}\r\n\r\n"
+        ).encode("utf-8") + body_bytes
+        sock = MockSocket(raw_request)
+
+        class CustomHandler(self.MangaRequestHandler):
+            def __init__(self, request, client_address, server):
+                self.request = request
+                self.client_address = client_address
+                self.server = server
+                self.setup()
+                try:
+                    self.handle()
+                finally:
+                    self.finish()
+
+        CustomHandler.library = self.library
+        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler(sock, ("127.0.0.1", 8000), None)
+
+        output = sock.wfile.getvalue()
+        parts = output.split(b"\r\n\r\n", 1)
+        headers = parts[0].decode("utf-8", errors="replace")
+        body = parts[1] if len(parts) > 1 else b""
+        return headers, body
+
+    def test_series_cover_jpg_priority(self):
+        """1. <SeriesDirectory>/cover.jpg is used when it exists."""
+        series_dir = self.lib_path / "Solo Leveling"
+        ch1 = series_dir / "Chapter 1"
+        ch1.mkdir(parents=True)
+        (ch1 / "1.jpg").write_bytes(b"PAGE_1")
+        cover_file = series_dir / "cover.jpg"
+        cover_file.write_bytes(b"DIRECT_COVER")
+
+        cover_path = self.library.get_cover_path("Solo Leveling")
+        self.assertEqual(cover_path, cover_file)
+
+    def test_series_cover_fallback_to_first_chapter_first_image(self):
+        """2. When cover.jpg does NOT exist, use first image from first chapter."""
+        series_dir = self.lib_path / "Solo Leveling"
+        ch1 = series_dir / "Chapter 1"
+        ch1.mkdir(parents=True)
+        img1 = ch1 / "1.jpg"
+        img1.write_bytes(b"PAGE_1")
+
+        cover_path = self.library.get_cover_path("Solo Leveling")
+        self.assertEqual(cover_path, img1)
+
+    def test_series_cover_fallback_respects_natural_sorting(self):
+        """3. Fallback respects natural sorting of chapters and images."""
+        series_dir = self.lib_path / "Naruto"
+        # Create Chapter 10 first, then Chapter 2
+        (series_dir / "Chapter 10").mkdir(parents=True)
+        ((series_dir / "Chapter 10") / "1.jpg").write_bytes(b"CH10_PAGE1")
+
+        ch2 = series_dir / "Chapter 2"
+        ch2.mkdir(parents=True)
+        (ch2 / "10.jpg").write_bytes(b"CH2_PAGE10")
+        (ch2 / "2.jpg").write_bytes(b"CH2_PAGE2")
+        (ch2 / "1.jpg").write_bytes(b"CH2_PAGE1")
+
+        # Natural sort: Chapter 2 comes before Chapter 10
+        # In Chapter 2: 1.jpg comes before 2.jpg and 10.jpg
+        cover_path = self.library.get_cover_path("Naruto")
+        self.assertEqual(cover_path, ch2 / "1.jpg")
+
+    def test_series_cover_empty_series_returns_none(self):
+        """4. Series with no cover.jpg and no images returns None."""
+        (self.lib_path / "EmptySeries").mkdir()
+        cover_path = self.library.get_cover_path("EmptySeries")
+        self.assertIsNone(cover_path)
+
+    def test_cover_jpg_not_counted_as_chapter(self):
+        """5. cover.jpg is NOT counted as a chapter in list_chapters."""
+        series_dir = self.lib_path / "Berserk"
+        series_dir.mkdir(parents=True)
+        (series_dir / "cover.jpg").write_bytes(b"COVER")
+        (series_dir / "Chapter 1").mkdir()
+        ((series_dir / "Chapter 1") / "1.jpg").write_bytes(b"IMG")
+
+        chapters = self.library.list_chapters("Berserk")
+        self.assertEqual(len(chapters), 1)
+        self.assertEqual(chapters[0]["name"], "Chapter 1")
+
+    def test_cover_jpg_not_in_chapter_images(self):
+        """6. cover.jpg does not appear in chapter image lists."""
+        series_dir = self.lib_path / "Berserk"
+        series_dir.mkdir(parents=True)
+        (series_dir / "cover.jpg").write_bytes(b"COVER")
+        ch1 = series_dir / "Chapter 1"
+        ch1.mkdir()
+        (ch1 / "1.jpg").write_bytes(b"IMG")
+
+        images = self.library.list_images("Berserk", "Chapter 1")
+        self.assertEqual(images, ["1.jpg"])
+        self.assertNotIn("cover.jpg", images)
+
+    def test_api_cover_endpoint_serves_image(self):
+        """7. GET /api/cover?series=... serves the image with 200 OK."""
+        series_dir = self.lib_path / "Bleach"
+        series_dir.mkdir(parents=True)
+        (series_dir / "cover.jpg").write_bytes(b"JPG_DATA_BLEACH")
+
+        headers, body = self._simulate_get("/api/cover?series=Bleach")
+        self.assertIn("200 OK", headers)
+        self.assertIn("Content-Type: image/jpeg", headers)
+        self.assertIn("Cache-Control: no-cache", headers)
+        self.assertEqual(body, b"JPG_DATA_BLEACH")
+
+    def test_api_cover_endpoint_no_cache_policy_regression(self):
+        """Regression test: /api/cover uses 'no-cache' and not 'public, max-age=86400'."""
+        series_dir = self.lib_path / "Bleach"
+        series_dir.mkdir(parents=True, exist_ok=True)
+        (series_dir / "cover.jpg").write_bytes(b"JPG_DATA_BLEACH")
+
+        headers, _ = self._simulate_get("/api/cover?series=Bleach")
+        self.assertIn("200 OK", headers)
+        self.assertIn("Cache-Control: no-cache", headers)
+        self.assertNotIn("public, max-age=86400", headers)
+        self.assertNotIn("max-age", headers)
+
+    def test_api_cover_endpoint_404_when_no_cover(self):
+        """8. GET /api/cover?series=... returns 404 when no cover/images exist."""
+        (self.lib_path / "EmptyBleach").mkdir()
+        headers, body = self._simulate_get("/api/cover?series=EmptyBleach")
+        self.assertIn("404", headers)
+
+    def test_api_cover_endpoint_path_traversal_blocked(self):
+        """9. Path traversal on /api/cover is blocked."""
+        headers, _ = self._simulate_get("/api/cover?series=../../etc")
+        self.assertIn("404", headers)
+
+    def test_api_series_includes_cover_metadata(self):
+        """10. /api/series includes has_cover and cover_url."""
+        series_dir = self.lib_path / "OnePiece"
+        ch1 = series_dir / "Chapter 1"
+        ch1.mkdir(parents=True)
+        (ch1 / "1.jpg").write_bytes(b"IMG")
+
+        (self.lib_path / "NoCoverSeries").mkdir()
+
+        headers, body = self._simulate_get("/api/series")
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        series_map = {s["name"]: s for s in data["series"]}
+
+        self.assertTrue(series_map["OnePiece"]["has_cover"])
+        self.assertIn("/api/cover?series=OnePiece", series_map["OnePiece"]["cover_url"])
+
+        self.assertFalse(series_map["NoCoverSeries"]["has_cover"])
+        self.assertIsNone(series_map["NoCoverSeries"]["cover_url"])
+
+    def test_reader_data_default_style_spaced(self):
+        """11. Default style is 'spaced' when no reader data exists."""
+        (self.lib_path / "TestSeries").mkdir()
+        data = self.library.get_reader_data("TestSeries")
+        self.assertEqual(data["reader"]["style"], "spaced")
+
+    def test_reader_data_save_and_retrieve_style(self):
+        """12. Style updates persist to reader_data.json and preserve progress/bookmarks."""
+        series_dir = self.lib_path / "TestSeries"
+        (series_dir / "Chapter 1").mkdir(parents=True)
+        ((series_dir / "Chapter 1") / "1.jpg").write_bytes(b"IMG")
+
+        # Set progress & bookmark first
+        self.library.update_progress("TestSeries", "Chapter 1", "1.jpg")
+        self.library.toggle_bookmark("TestSeries", "Chapter 1", True)
+
+        # Update style
+        result = self.library.update_reader_style("TestSeries", "seamless")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["reader"]["style"], "seamless")
+        self.assertEqual(result["progress"]["Chapter 1"], "1.jpg")
+        self.assertEqual(result["bookmarks"], ["Chapter 1"])
+
+        # Re-read directly from disk
+        saved = self.library.get_reader_data("TestSeries")
+        self.assertEqual(saved["reader"]["style"], "seamless")
+        self.assertEqual(saved["progress"]["Chapter 1"], "1.jpg")
+        self.assertEqual(saved["bookmarks"], ["Chapter 1"])
+
+    def test_reader_data_invalid_style_rejected_or_fallback(self):
+        """13. Invalid style rejected in update, or falls back to 'spaced' if file corrupted."""
+        (self.lib_path / "TestSeries").mkdir()
+        # Direct call with invalid value
+        res = self.library.update_reader_style("TestSeries", "invalid_style")
+        self.assertIsNone(res)
+
+        # Corrupted reader_data.json with invalid style
+        reader_dir = self.lib_path / "TestSeries" / ".reader"
+        reader_dir.mkdir(parents=True, exist_ok=True)
+        (reader_dir / "reader_data.json").write_text(
+            json.dumps({"progress": {}, "bookmarks": [], "reader": {"style": "bogus"}}),
+            encoding="utf-8"
+        )
+        data = self.library.get_reader_data("TestSeries")
+        self.assertEqual(data["reader"]["style"], "spaced")
+
+    def test_api_style_post_endpoint(self):
+        """14. POST /api/style updates style and returns JSON response."""
+        (self.lib_path / "TestSeries").mkdir()
+        headers, body = self._simulate_post("/api/style", {
+            "series": "TestSeries",
+            "style": "seamless"
+        })
+        self.assertIn("200 OK", headers)
+        resp = json.loads(body.decode("utf-8"))
+        self.assertTrue(resp["success"])
+        self.assertEqual(resp["style"], "seamless")
+        self.assertEqual(resp["reader"]["style"], "seamless")
+
+        # Verify invalid style yields 400
+        headers_err, _ = self._simulate_post("/api/style", {
+            "series": "TestSeries",
+            "style": "invalid"
+        })
+        self.assertIn("400", headers_err)
 
 
 if __name__ == "__main__":

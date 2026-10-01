@@ -61,8 +61,8 @@ document.addEventListener("DOMContentLoaded", () => {
   let saveProgressTimeout = null;
   let isInitialResume = false;
 
-  // Persist reading style across chapters within the current session
-  let currentReadingStyle = sessionStorage.getItem("manga_reader_style") || "spaced";
+  // Reading style preference (defaults to spaced)
+  let currentReadingStyle = "spaced";
 
   // Notification helper
   function showError(message) {
@@ -79,6 +79,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // View switcher
   function switchView(viewName) {
     clearError();
+    document.body.classList.toggle("reader-active", viewName === "reader");
     viewLibrary.classList.toggle("hidden", viewName !== "library");
     viewChapters.classList.toggle("hidden", viewName !== "chapters");
     viewReader.classList.toggle("hidden", viewName !== "reader");
@@ -100,12 +101,11 @@ document.addEventListener("DOMContentLoaded", () => {
     window.scrollTo({ top: 0, behavior: "instant" });
   }
 
-  // Reading Style Manager
-  function applyReadingStyle(style) {
-    currentReadingStyle = style;
-    sessionStorage.setItem("manga_reader_style", style);
+  // Reading Style Manager (per-series preference persisted to .reader/reader_data.json)
+  function applyReadingStyle(style, persist = false) {
+    currentReadingStyle = style === "seamless" ? "seamless" : "spaced";
 
-    if (style === "seamless") {
+    if (currentReadingStyle === "seamless") {
       readerContainer.classList.remove("mode-spaced");
       readerContainer.classList.add("mode-seamless");
       btnStyleSeamless.classList.add("active");
@@ -115,6 +115,19 @@ document.addEventListener("DOMContentLoaded", () => {
       readerContainer.classList.add("mode-spaced");
       btnStyleSpaced.classList.add("active");
       btnStyleSeamless.classList.remove("active");
+    }
+
+    if (persist && currentSeries) {
+      fetch("/api/style", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          series: currentSeries,
+          style: currentReadingStyle
+        })
+      }).catch((err) => {
+        console.warn("Failed to persist reader style preference:", err);
+      });
     }
   }
 
@@ -131,6 +144,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function updateFullscreenUI() {
     if (!btnReaderFullscreen) return;
     const active = isFullscreenActive();
+    document.body.classList.toggle("in-fullscreen", active);
     if (iconFullscreenEnter && iconFullscreenExit) {
       iconFullscreenEnter.classList.toggle("hidden", active);
       iconFullscreenExit.classList.toggle("hidden", !active);
@@ -308,24 +322,48 @@ document.addEventListener("DOMContentLoaded", () => {
         card.setAttribute("role", "button");
         card.setAttribute("tabindex", "0");
 
+        const coverHtml = s.has_cover && s.cover_url
+          ? `<div class="series-cover-wrapper">
+               <img class="series-cover-img" src="${s.cover_url}" alt="${escapeHtml(s.name)} cover" loading="lazy" />
+             </div>`
+          : `<div class="series-cover-wrapper series-cover-placeholder">
+               <svg class="placeholder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                 <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+                 <path d="M6 6h10"/>
+                 <path d="M6 10h10"/>
+               </svg>
+             </div>`;
+
         card.innerHTML = `
-          <div class="series-card-top">
-            <div class="series-card-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
-                <path d="M6 6h10"/>
-                <path d="M6 10h10"/>
+          ${coverHtml}
+          <div class="series-card-content">
+            <div class="series-card-title" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
+            <div class="series-card-footer">
+              <span class="badge">${s.chapter_count} ${s.chapter_count === 1 ? "chapter" : "chapters"}</span>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" class="chapter-arrow">
+                <path d="M9 18l6-6-6-6"/>
               </svg>
             </div>
-            <div class="series-card-title">${escapeHtml(s.name)}</div>
-          </div>
-          <div class="series-card-footer">
-            <span class="badge">${s.chapter_count} ${s.chapter_count === 1 ? "chapter" : "chapters"}</span>
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" class="chapter-arrow">
-              <path d="M9 18l6-6-6-6"/>
-            </svg>
           </div>
         `;
+
+        // Handle image loading errors gracefully without broken image icon
+        const coverImg = card.querySelector(".series-cover-img");
+        if (coverImg) {
+          coverImg.addEventListener("error", () => {
+            const wrapper = card.querySelector(".series-cover-wrapper");
+            if (wrapper) {
+              wrapper.className = "series-cover-wrapper series-cover-placeholder";
+              wrapper.innerHTML = `
+                <svg class="placeholder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+                  <path d="M6 6h10"/>
+                  <path d="M6 10h10"/>
+                </svg>
+              `;
+            }
+          });
+        }
 
         card.addEventListener("click", () => {
           window.location.hash = `#/series/${encodeURIComponent(s.name)}`;
@@ -452,9 +490,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     currentVisibleImage = null;
 
-    // Apply stored reading style (Spaced vs Seamless)
-    applyReadingStyle(currentReadingStyle);
-
     updateBreadcrumbs([
       { label: "Library", href: "#/" },
       { label: seriesName, href: `#/series/${encodeURIComponent(seriesName)}` },
@@ -473,6 +508,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
       currentSeriesBookmarks = new Set(readerData.bookmarks || []);
       currentSeriesProgress = readerData.progress || {};
+
+      // Apply saved series reading style preference (defaults to spaced)
+      const savedStyle = (readerData.reader && (readerData.reader.style === "seamless" || readerData.reader.style === "spaced"))
+        ? readerData.reader.style
+        : "spaced";
+      applyReadingStyle(savedStyle, false);
 
       // Determine Previous & Next Chapters from natural ordering
       const chapterList = (chaptersData.chapters || []).map((c) => c.name);
@@ -692,11 +733,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Style Toggle Buttons (Spaced vs Seamless)
   btnStyleSpaced.addEventListener("click", () => {
-    applyReadingStyle("spaced");
+    applyReadingStyle("spaced", true);
   });
 
   btnStyleSeamless.addEventListener("click", () => {
-    applyReadingStyle("seamless");
+    applyReadingStyle("seamless", true);
   });
 
   // Lightweight Keyboard Shortcuts

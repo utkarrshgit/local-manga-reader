@@ -13,7 +13,7 @@ import sys
 from http import HTTPStatus
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs, unquote, quote
 
 DEFAULT_PORT = 8000
 DEFAULT_LIBRARY_DIR = os.path.expanduser("~/Manga")
@@ -63,9 +63,12 @@ class MangaLibrary:
                     if ch.is_dir() and not ch.name.startswith("."):
                         chapter_count += 1
 
+                has_cover = self.get_cover_path(entry.name) is not None
                 series_list.append({
                     "name": entry.name,
-                    "chapter_count": chapter_count
+                    "chapter_count": chapter_count,
+                    "has_cover": has_cover,
+                    "cover_url": f"/api/cover?series={quote(entry.name)}" if has_cover else None
                 })
 
         series_list.sort(key=lambda s: natural_sort_key(s["name"]))
@@ -122,9 +125,38 @@ class MangaLibrary:
             return target_path
         return None
 
+    def get_cover_path(self, series_name: str) -> Path | None:
+        """
+        Resolves the cover image path for a series.
+        Priority:
+        1. <series_dir>/cover.jpg (or .jpeg)
+        2. First image of the first naturally sorted chapter
+        Returns None if no cover or chapter images exist.
+        """
+        series_dir = self.root_path / series_name
+        if not self._is_safe_child(series_dir) or not series_dir.is_dir():
+            return None
+
+        # Priority 1: <series_dir>/cover.jpg
+        candidate = series_dir / "cover.jpg"
+        if candidate.is_file():
+            return candidate
+
+        # Priority 2: First image of the first naturally sorted chapter
+        chapters = self.list_chapters(series_name)
+        for ch in chapters:
+            images = self.list_images(series_name, ch["name"])
+            if images:
+                first_img = images[0]
+                img_path = self.get_image_path(series_name, ch["name"], first_img)
+                if img_path and img_path.is_file():
+                    return img_path
+
+        return None
+
     def get_reader_data(self, series_name: str) -> dict | None:
         """
-        Retrieves reader data (bookmarks and progress) for a given series.
+        Retrieves reader data (bookmarks, progress, and preferences) for a given series.
         Returns default dict if file does not exist or is malformed.
         Returns None if series_name is invalid or unsafe.
         """
@@ -134,7 +166,10 @@ class MangaLibrary:
 
         default_data = {
             "progress": {},
-            "bookmarks": []
+            "bookmarks": [],
+            "reader": {
+                "style": "spaced"
+            }
         }
 
         reader_file = series_dir / ".reader" / "reader_data.json"
@@ -155,9 +190,19 @@ class MangaLibrary:
             if not isinstance(bookmarks, list):
                 bookmarks = []
 
+            reader_meta = data.get("reader")
+            style = "spaced"
+            if isinstance(reader_meta, dict):
+                raw_style = reader_meta.get("style")
+                if raw_style in ("spaced", "seamless"):
+                    style = raw_style
+
             return {
                 "progress": progress,
-                "bookmarks": bookmarks
+                "bookmarks": bookmarks,
+                "reader": {
+                    "style": style
+                }
             }
         except Exception:
             return default_data
@@ -175,9 +220,19 @@ class MangaLibrary:
         reader_file = reader_dir / "reader_data.json"
         temp_file = reader_dir / "reader_data.json.tmp"
 
+        reader_meta = data.get("reader", {})
+        style = "spaced"
+        if isinstance(reader_meta, dict):
+            raw_style = reader_meta.get("style")
+            if raw_style in ("spaced", "seamless"):
+                style = raw_style
+
         clean_data = {
             "progress": data.get("progress", {}),
-            "bookmarks": data.get("bookmarks", [])
+            "bookmarks": data.get("bookmarks", []),
+            "reader": {
+                "style": style
+            }
         }
 
         try:
@@ -191,6 +246,26 @@ class MangaLibrary:
                 except OSError:
                     pass
             return False
+
+    def update_reader_style(self, series_name: str, style: str) -> dict | None:
+        """
+        Updates the reader style preference ('spaced' or 'seamless') for a series.
+        """
+        if style not in ("spaced", "seamless"):
+            return None
+
+        series_dir = self.root_path / series_name
+        if not self._is_safe_child(series_dir) or not series_dir.is_dir():
+            return None
+
+        data = self.get_reader_data(series_name)
+        if data is None:
+            return None
+
+        data["reader"] = {"style": style}
+        if self.save_reader_data(series_name, data):
+            return data
+        return None
 
     def update_progress(self, series_name: str, chapter_name: str, image_name: str) -> dict | None:
         """
@@ -363,7 +438,38 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 pass
             return
 
-        # 5. API: Get reader data (bookmarks and progress) for a series (/api/reader-data?series=...)
+        # 5. API: Serve series cover image (/api/cover?series=...)
+        if path == "/api/cover":
+            series_name = get_param("series")
+            if not series_name:
+                self._send_error("Missing required query parameter: 'series'", HTTPStatus.BAD_REQUEST)
+                return
+
+            cover_path = self.library.get_cover_path(series_name)
+            if not cover_path or not cover_path.is_file():
+                self._send_error(f"Cover not found for series: {series_name}", HTTPStatus.NOT_FOUND)
+                return
+
+            try:
+                mime_type, _ = mimetypes.guess_type(str(cover_path))
+                if not mime_type:
+                    mime_type = "image/jpeg"
+
+                file_size = cover_path.stat().st_size
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", mime_type)
+                self.send_header("Content-Length", str(file_size))
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+
+                with open(cover_path, "rb") as f:
+                    while chunk := f.read(65536):
+                        self.wfile.write(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
+
+        # 6. API: Get reader data (bookmarks, progress, preferences) for a series (/api/reader-data?series=...)
         if path == "/api/reader-data":
             series_name = get_param("series")
             if not series_name:
@@ -378,11 +484,12 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
             self._send_json({
                 "series": series_name,
                 "progress": data["progress"],
-                "bookmarks": data["bookmarks"]
+                "bookmarks": data["bookmarks"],
+                "reader": data["reader"]
             })
             return
 
-        # 6. Static Assets (index.html, style.css, app.js)
+        # 7. Static Assets (index.html, style.css, app.js)
         clean_path = path.lstrip("/")
         if clean_path.startswith("static/"):
             clean_path = clean_path[len("static/"):]
@@ -407,11 +514,11 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(data)
             return
 
-        # 7. Status / Health Check endpoint
+        # 8. Status / Health Check endpoint
         if path == "/api/status":
             self._send_json({
                 "status": "online",
-                "app": "Local Manga Reader (Phase 4)",
+                "app": "Local Manga Reader (Phase 6)",
                 "library_path": str(self.library.root_path),
                 "library_exists": self.library.exists(),
                 "endpoints": [
@@ -419,9 +526,11 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                     "/api/chapters?series=<series_name>",
                     "/api/images?series=<series_name>&chapter=<chapter_name>",
                     "/api/image-file?series=<series_name>&chapter=<chapter_name>&file=<filename>",
+                    "/api/cover?series=<series_name>",
                     "/api/reader-data?series=<series_name>",
                     "POST /api/progress",
-                    "POST /api/bookmark"
+                    "POST /api/bookmark",
+                    "POST /api/style"
                 ]
             })
             return
@@ -469,7 +578,8 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 "series": series,
                 "chapter": chapter,
                 "progress": data["progress"],
-                "bookmarks": data["bookmarks"]
+                "bookmarks": data["bookmarks"],
+                "reader": data["reader"]
             })
             return
 
@@ -499,11 +609,45 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 "chapter": chapter,
                 "bookmarked": chapter in data["bookmarks"],
                 "progress": data["progress"],
-                "bookmarks": data["bookmarks"]
+                "bookmarks": data["bookmarks"],
+                "reader": data["reader"]
             })
             return
 
-        # 3. API: Unified reader data endpoint (/api/reader-data)
+        # 3. API: Update reading style preference (/api/style)
+        if path == "/api/style":
+            body = self._read_json_body()
+            if not body:
+                self._send_error("Invalid or missing JSON body", HTTPStatus.BAD_REQUEST)
+                return
+
+            series = body.get("series")
+            style = body.get("style")
+
+            if not series or not style:
+                self._send_error("Missing required fields: 'series', 'style'", HTTPStatus.BAD_REQUEST)
+                return
+
+            if style not in ("spaced", "seamless"):
+                self._send_error("Invalid style value. Allowed: 'spaced', 'seamless'", HTTPStatus.BAD_REQUEST)
+                return
+
+            data = self.library.update_reader_style(series, style)
+            if data is None:
+                self._send_error("Failed to update reader style (invalid series)", HTTPStatus.BAD_REQUEST)
+                return
+
+            self._send_json({
+                "success": True,
+                "series": series,
+                "style": data["reader"]["style"],
+                "progress": data["progress"],
+                "bookmarks": data["bookmarks"],
+                "reader": data["reader"]
+            })
+            return
+
+        # 4. API: Unified reader data endpoint (/api/reader-data)
         if path == "/api/reader-data":
             body = self._read_json_body()
             if not body:
@@ -514,22 +658,33 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
             chapter = body.get("chapter")
             action = body.get("action")
 
-            if not series or not chapter:
-                self._send_error("Missing required fields: 'series', 'chapter'", HTTPStatus.BAD_REQUEST)
+            if not series:
+                self._send_error("Missing required field: 'series'", HTTPStatus.BAD_REQUEST)
                 return
 
-            if action == "progress" or "image" in body:
-                image = body.get("image")
-                if not image:
-                    self._send_error("Missing required field: 'image'", HTTPStatus.BAD_REQUEST)
+            if action == "style" or (action is None and "style" in body):
+                style = body.get("style")
+                if not style or style not in ("spaced", "seamless"):
+                    self._send_error("Invalid or missing style value", HTTPStatus.BAD_REQUEST)
                     return
-                data = self.library.update_progress(series, chapter, image)
-            elif action == "bookmark" or "bookmarked" in body:
-                bookmarked = body.get("bookmarked")
-                data = self.library.toggle_bookmark(series, chapter, bookmarked)
+                data = self.library.update_reader_style(series, style)
             else:
-                self._send_error("Unrecognized action or missing payload in /api/reader-data", HTTPStatus.BAD_REQUEST)
-                return
+                if not chapter:
+                    self._send_error("Missing required field: 'chapter'", HTTPStatus.BAD_REQUEST)
+                    return
+
+                if action == "progress" or "image" in body:
+                    image = body.get("image")
+                    if not image:
+                        self._send_error("Missing required field: 'image'", HTTPStatus.BAD_REQUEST)
+                        return
+                    data = self.library.update_progress(series, chapter, image)
+                elif action == "bookmark" or "bookmarked" in body:
+                    bookmarked = body.get("bookmarked")
+                    data = self.library.toggle_bookmark(series, chapter, bookmarked)
+                else:
+                    self._send_error("Unrecognized action or missing payload in /api/reader-data", HTTPStatus.BAD_REQUEST)
+                    return
 
             if data is None:
                 self._send_error("Failed to update reader data (invalid input)", HTTPStatus.BAD_REQUEST)
@@ -539,7 +694,8 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 "success": True,
                 "series": series,
                 "progress": data["progress"],
-                "bookmarks": data["bookmarks"]
+                "bookmarks": data["bookmarks"],
+                "reader": data["reader"]
             })
             return
 
