@@ -38,6 +38,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnReaderFooterNext = document.getElementById("btn-reader-footer-next");
   const btnStyleSpaced = document.getElementById("btn-style-spaced");
   const btnStyleSeamless = document.getElementById("btn-style-seamless");
+  const readerProgressContainer = document.getElementById("reader-progress-container");
+  const readerProgressCurrent = document.getElementById("reader-progress-current");
+  const readerProgressTotal = document.getElementById("reader-progress-total");
+  const readerProgressTrack = document.getElementById("reader-progress-track");
 
   // Fullscreen icons
   const iconFullscreenEnter = btnReaderFullscreen ? btnReaderFullscreen.querySelector(".icon-fullscreen-enter") : null;
@@ -56,12 +60,149 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentSeriesProgress = {};
   let currentPrevChapter = null;
   let currentNextChapter = null;
+  let currentChapterImages = [];
 
   // Reading progress observer state
   let readerObserver = null;
   let currentVisibleImage = null;
   let saveProgressTimeout = null;
   let isInitialResume = false;
+
+  // Persistent bottom reader progress timeline state
+  let chapterTotalPages = 0;
+  let numProgressSegments = 0;
+  let hoveredProgressSegment = null;
+
+  // Bottom Reader Progress Timeline (Segmented, Full-Width & Interactive)
+  function setupReaderProgress(totalPages) {
+    if (!readerProgressContainer || !readerProgressTrack) return;
+    chapterTotalPages = totalPages;
+    if (totalPages <= 0) {
+      readerProgressContainer.classList.add("hidden");
+      return;
+    }
+
+    // Adaptive segmented representation (max 80 segments)
+    numProgressSegments = Math.min(totalPages, 80);
+    readerProgressTrack.innerHTML = "";
+    const fragment = document.createDocumentFragment();
+
+    for (let i = 0; i < numProgressSegments; i++) {
+      const seg = document.createElement("div");
+      seg.className = "progress-segment future";
+
+      // Calculate 1-based page range for this segment
+      const startPage = Math.floor((i * totalPages) / numProgressSegments) + 1;
+      const endPage = Math.floor(((i + 1) * totalPages) / numProgressSegments);
+      const targetPage = Math.min(totalPages, Math.max(startPage, Math.round((startPage + endPage) / 2)));
+      const targetImg = currentChapterImages[targetPage - 1];
+
+      seg.dataset.segmentIndex = i;
+      seg.dataset.startPage = startPage;
+      seg.dataset.endPage = endPage;
+      seg.dataset.targetPage = targetPage;
+      if (targetImg) {
+        seg.dataset.targetFilename = targetImg.filename;
+      }
+      seg.setAttribute("title", totalPages <= numProgressSegments ? `Page ${targetPage}` : `Pages ${startPage}–${endPage} (Jump to ${targetPage})`);
+
+      fragment.appendChild(seg);
+    }
+    readerProgressTrack.appendChild(fragment);
+
+    if (readerProgressTotal) {
+      readerProgressTotal.textContent = totalPages;
+    }
+    readerProgressContainer.classList.remove("hidden");
+  }
+
+  function updateReaderProgress(pageIndex) {
+    if (!readerProgressContainer || chapterTotalPages <= 0) return;
+    const clampedIndex = Math.max(1, Math.min(pageIndex, chapterTotalPages));
+
+    if (readerProgressCurrent) {
+      readerProgressCurrent.textContent = clampedIndex;
+    }
+
+    if (readerProgressTrack && numProgressSegments > 0) {
+      let activeSegIndex = 0;
+      if (chapterTotalPages <= numProgressSegments) {
+        activeSegIndex = clampedIndex - 1;
+      } else {
+        activeSegIndex = Math.min(
+          numProgressSegments - 1,
+          Math.floor(((clampedIndex - 1) * numProgressSegments) / chapterTotalPages)
+        );
+      }
+
+      const segments = readerProgressTrack.children;
+      for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        const isHovered = (seg === hoveredProgressSegment);
+        seg.className = isHovered ? "progress-segment hovered" : "progress-segment";
+        if (i < activeSegIndex) {
+          seg.classList.add("past", "completed");
+        } else if (i === activeSegIndex) {
+          seg.classList.add("current", "completed");
+        } else {
+          seg.classList.add("future");
+        }
+      }
+    }
+  }
+
+  // Progress Timeline Interactions (Hover glow preview & Click-to-jump)
+  if (readerProgressTrack) {
+    readerProgressTrack.addEventListener("pointermove", (e) => {
+      // Hover effects for mouse/pointer only (avoid stuck states on touch devices)
+      if (e.pointerType === "touch") return;
+
+      const segment = e.target.closest(".progress-segment");
+      if (segment && segment !== hoveredProgressSegment) {
+        if (hoveredProgressSegment) {
+          hoveredProgressSegment.classList.remove("hovered");
+        }
+        hoveredProgressSegment = segment;
+        hoveredProgressSegment.classList.add("hovered");
+      }
+    });
+
+    readerProgressTrack.addEventListener("pointerleave", () => {
+      if (hoveredProgressSegment) {
+        hoveredProgressSegment.classList.remove("hovered");
+        hoveredProgressSegment = null;
+      }
+    });
+
+    // Ensure touch interactions don't leave lingering hover styles
+    readerProgressTrack.addEventListener("pointerup", (e) => {
+      if (e.pointerType === "touch") {
+        if (hoveredProgressSegment) {
+          hoveredProgressSegment.classList.remove("hovered");
+          hoveredProgressSegment = null;
+        }
+      }
+    });
+
+    // Click on segment jumps directly to that page
+    readerProgressTrack.addEventListener("click", (e) => {
+      const segment = e.target.closest(".progress-segment");
+      if (!segment) return;
+
+      const targetFilename = segment.dataset.targetFilename;
+      const targetPage = parseInt(segment.dataset.targetPage, 10);
+
+      if (targetFilename) {
+        const targetPageEl = document.getElementById(`page-${targetFilename}`);
+        if (targetPageEl) {
+          targetPageEl.scrollIntoView({ behavior: "instant", block: "start" });
+          if (targetPage) {
+            updateReaderProgress(targetPage);
+          }
+        }
+      }
+    });
+  }
 
   // Reading style preference (defaults to spaced)
   let currentReadingStyle = "spaced";
@@ -88,6 +229,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (viewName !== "reader") {
       readerLoading.classList.add("hidden");
+      if (readerProgressContainer) readerProgressContainer.classList.add("hidden");
+      if (hoveredProgressSegment) {
+        hoveredProgressSegment.classList.remove("hovered");
+        hoveredProgressSegment = null;
+      }
+      currentChapterImages = [];
+      chapterTotalPages = 0;
+      numProgressSegments = 0;
       if (readerEmpty) readerEmpty.classList.add("hidden");
       if (readerObserver) {
         readerObserver.disconnect();
@@ -496,6 +645,7 @@ document.addEventListener("DOMContentLoaded", () => {
     readerChapterName.textContent = chapterName;
     readerContainer.innerHTML = "";
     readerFooter.classList.add("hidden");
+    if (readerProgressContainer) readerProgressContainer.classList.add("hidden");
     if (readerEmpty) readerEmpty.classList.add("hidden");
     readerLoading.classList.remove("hidden");
 
@@ -550,12 +700,23 @@ document.addEventListener("DOMContentLoaded", () => {
       readerLoading.classList.add("hidden");
 
       if (images.length === 0) {
+        if (readerProgressContainer) readerProgressContainer.classList.add("hidden");
         if (readerEmpty) readerEmpty.classList.remove("hidden");
         showError("No images found in this chapter.");
         return;
       }
 
       if (readerEmpty) readerEmpty.classList.add("hidden");
+
+      // Map filename to 1-based page index
+      const filenameToIndex = new Map();
+      images.forEach((img, idx) => {
+        filenameToIndex.set(img.filename, idx + 1);
+      });
+
+      // Setup bottom reading progress timeline
+      currentChapterImages = images;
+      setupReaderProgress(images.length);
 
       // Render images vertically in natural order
       images.forEach((img) => {
@@ -582,9 +743,13 @@ document.addEventListener("DOMContentLoaded", () => {
       // Resume reading progress
       const savedImage = currentSeriesProgress[chapterName];
       let targetPage = null;
-      if (savedImage) {
+      let initialPageIndex = 1;
+      if (savedImage && filenameToIndex.has(savedImage)) {
         targetPage = document.getElementById(`page-${savedImage}`);
+        initialPageIndex = filenameToIndex.get(savedImage);
       }
+
+      updateReaderProgress(initialPageIndex);
 
       if (targetPage) {
         currentVisibleImage = savedImage;
@@ -632,6 +797,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (bestPage) {
           const filename = bestPage.dataset.filename;
+          if (filename && filenameToIndex.has(filename)) {
+            const activeIndex = filenameToIndex.get(filename);
+            updateReaderProgress(activeIndex);
+          }
+
           if (filename && filename !== currentVisibleImage) {
             currentVisibleImage = filename;
 
@@ -661,6 +831,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     } catch (err) {
       readerLoading.classList.add("hidden");
+      if (readerProgressContainer) readerProgressContainer.classList.add("hidden");
       if (readerEmpty) readerEmpty.classList.add("hidden");
       showError(`Failed to load chapter images: ${err.message}`);
     }

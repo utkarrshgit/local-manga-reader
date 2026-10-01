@@ -11,10 +11,10 @@
   --text: #F1EDEE;
   --text-secondary: #B8AEB0;
   --text-muted: #756A6D;
-  --accent: #8F1D2C;
-  --accent-hover: #B52A3A;
-  --accent-muted: #64202A;
-  --accent-subtle: rgba(143, 29, 44, 0.14);
+  --accent: #E53935;
+  --accent-hover: #FF4D4D;
+  --accent-muted: #8F2A2A;
+  --accent-subtle: rgba(229, 57, 53, 0.14);
 
   /* Compatibility aliases for test assertions & legacy hooks */
   --bg-primary: var(--bg);
@@ -648,7 +648,7 @@ html, body {
 }
 
 .status-banner.error {
-  background-color: rgba(143, 29, 44, 0.12);
+  background-color: rgba(229, 57, 53, 0.12);
   border: none;
   border-left: 2px solid var(--accent);
   color: #FFA5B0;
@@ -1018,10 +1018,171 @@ body.in-fullscreen .reader-header {
    ========================================= */
 .reader-footer {
   max-width: 900px;
-  margin: 24px auto 48px;
-  padding: 32px 18px;
+  margin: 24px auto 0;
+  padding: 32px 18px calc(64px + env(safe-area-inset-bottom, 0px));
   text-align: center;
   border-top: 1px solid var(--border);
+}
+
+/* =========================================
+   Persistent Full-Width Bottom Reader Progress Timeline
+   ========================================= */
+.reader-progress-container {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  width: 100vw;
+  width: 100dvw;
+  z-index: 90;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 0;
+  padding: 4px 0 env(safe-area-inset-bottom, 0px) 0;
+  background-color: rgba(13, 11, 12, 0.96);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid rgba(42, 32, 34, 0.7);
+  border-radius: 0;
+  box-shadow: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: opacity 0.15s ease;
+}
+
+:fullscreen .reader-progress-container,
+:-webkit-full-screen .reader-progress-container,
+body.in-fullscreen .reader-progress-container {
+  display: none !important;
+}
+
+.reader-progress-container.hidden {
+  display: none !important;
+}
+
+.reader-progress-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.70rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  padding: 2px 0 4px 0;
+  pointer-events: none;
+}
+
+.reader-progress-label .progress-current {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.reader-progress-label .progress-sep {
+  color: var(--text-muted);
+  margin: 0 4px;
+  font-size: 0.66rem;
+  opacity: 0.6;
+}
+
+.reader-progress-label .progress-total {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.reader-progress-track {
+  display: flex;
+  width: 100%;
+  height: 2px;
+  gap: 1px;
+  align-items: flex-end;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+  position: relative;
+}
+
+.progress-segment {
+  flex: 1;
+  height: 2px;
+  background-color: #8A8586;
+  border-radius: 0;
+  cursor: pointer;
+  position: relative;
+  transform-origin: bottom;
+  transition: transform 0.12s ease, background-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+/* Invisible expanded hit/touch target: ~30px above the timeline */
+.progress-segment::before {
+  content: "";
+  position: absolute;
+  top: -30px;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: transparent;
+  pointer-events: auto;
+}
+
+/* Past / Read Pages */
+.progress-segment.past {
+  background-color: var(--accent);
+  box-shadow: none;
+}
+
+/* Current Page */
+.progress-segment.current {
+  background-color: var(--accent-hover);
+  box-shadow: 0 0 3px rgba(255, 77, 77, 0.45);
+}
+
+/* Future / Unread Pages */
+.progress-segment.future {
+  background-color: #8A8586;
+  box-shadow: none;
+}
+
+/* Backward compatibility for .completed */
+.progress-segment.completed:not(.current):not(.future) {
+  background-color: var(--accent);
+}
+
+/* Past / Current page hover & glow (Red) */
+.progress-segment.past.hovered,
+.progress-segment.current.hovered,
+.progress-segment.completed.hovered {
+  background-color: var(--accent-hover) !important;
+  box-shadow: 0 0 6px rgba(255, 77, 77, 0.8), 0 -1px 2px rgba(255, 77, 77, 0.4) !important;
+  transform: scaleY(1.8);
+  z-index: 5;
+}
+
+/* Future page hover & glow (White) */
+.progress-segment.future.hovered {
+  background-color: #FFFFFF !important;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.85), 0 -1px 2px rgba(255, 255, 255, 0.45) !important;
+  transform: scaleY(1.8);
+  z-index: 5;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .progress-segment.past:hover,
+  .progress-segment.current:hover,
+  .progress-segment.completed:hover {
+    background-color: var(--accent-hover) !important;
+    box-shadow: 0 0 6px rgba(255, 77, 77, 0.8), 0 -1px 2px rgba(255, 77, 77, 0.4) !important;
+    transform: scaleY(1.8);
+    z-index: 5;
+  }
+
+  .progress-segment.future:hover {
+    background-color: #FFFFFF !important;
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.85), 0 -1px 2px rgba(255, 255, 255, 0.45) !important;
+    transform: scaleY(1.8);
+    z-index: 5;
+  }
 }
 
 .reader-end-tag {
