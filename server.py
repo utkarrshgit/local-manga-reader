@@ -122,6 +122,133 @@ class MangaLibrary:
             return target_path
         return None
 
+    def get_reader_data(self, series_name: str) -> dict | None:
+        """
+        Retrieves reader data (bookmarks and progress) for a given series.
+        Returns default dict if file does not exist or is malformed.
+        Returns None if series_name is invalid or unsafe.
+        """
+        series_dir = self.root_path / series_name
+        if not self._is_safe_child(series_dir) or not series_dir.is_dir():
+            return None
+
+        default_data = {
+            "progress": {},
+            "bookmarks": []
+        }
+
+        reader_file = series_dir / ".reader" / "reader_data.json"
+        if not reader_file.is_file():
+            return default_data
+
+        try:
+            content = reader_file.read_text(encoding="utf-8")
+            data = json.loads(content)
+            if not isinstance(data, dict):
+                return default_data
+
+            progress = data.get("progress")
+            if not isinstance(progress, dict):
+                progress = {}
+
+            bookmarks = data.get("bookmarks")
+            if not isinstance(bookmarks, list):
+                bookmarks = []
+
+            return {
+                "progress": progress,
+                "bookmarks": bookmarks
+            }
+        except Exception:
+            return default_data
+
+    def save_reader_data(self, series_name: str, data: dict) -> bool:
+        """
+        Saves reader data for a series inside <Series>/.reader/reader_data.json.
+        """
+        series_dir = self.root_path / series_name
+        if not self._is_safe_child(series_dir) or not series_dir.is_dir():
+            return False
+
+        reader_dir = series_dir / ".reader"
+        reader_dir.mkdir(parents=True, exist_ok=True)
+        reader_file = reader_dir / "reader_data.json"
+        temp_file = reader_dir / "reader_data.json.tmp"
+
+        clean_data = {
+            "progress": data.get("progress", {}),
+            "bookmarks": data.get("bookmarks", [])
+        }
+
+        try:
+            temp_file.write_text(json.dumps(clean_data, indent=2), encoding="utf-8")
+            temp_file.replace(reader_file)
+            return True
+        except Exception:
+            if temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except OSError:
+                    pass
+            return False
+
+    def update_progress(self, series_name: str, chapter_name: str, image_name: str) -> dict | None:
+        """
+        Updates the last read image for a chapter in a series.
+        """
+        series_dir = self.root_path / series_name
+        if not self._is_safe_child(series_dir) or not series_dir.is_dir():
+            return None
+
+        chapter_dir = series_dir / chapter_name
+        if not self._is_safe_child(chapter_dir) or not chapter_dir.is_dir():
+            return None
+
+        # Validate image filename (must not contain path separators)
+        if not image_name or "/" in image_name or "\\" in image_name or ".." in image_name:
+            return None
+
+        data = self.get_reader_data(series_name)
+        if data is None:
+            return None
+
+        data["progress"][chapter_name] = image_name
+        if self.save_reader_data(series_name, data):
+            return data
+        return None
+
+    def toggle_bookmark(self, series_name: str, chapter_name: str, bookmarked: bool | None = None) -> dict | None:
+        """
+        Adds, removes, or toggles bookmark for a chapter in a series.
+        """
+        series_dir = self.root_path / series_name
+        if not self._is_safe_child(series_dir) or not series_dir.is_dir():
+            return None
+
+        chapter_dir = series_dir / chapter_name
+        if not self._is_safe_child(chapter_dir) or not chapter_dir.is_dir():
+            return None
+
+        data = self.get_reader_data(series_name)
+        if data is None:
+            return None
+
+        bookmarks = set(data.get("bookmarks", []))
+        if bookmarked is None:
+            if chapter_name in bookmarks:
+                bookmarks.remove(chapter_name)
+            else:
+                bookmarks.add(chapter_name)
+        elif bookmarked:
+            bookmarks.add(chapter_name)
+        else:
+            bookmarks.discard(chapter_name)
+
+        data["bookmarks"] = sorted(list(bookmarks), key=natural_sort_key)
+        if self.save_reader_data(series_name, data):
+            return data
+        return None
+
 
 class MangaRequestHandler(BaseHTTPRequestHandler):
     """HTTP request handler for serving manga API endpoints and static assets."""
@@ -236,7 +363,26 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 pass
             return
 
-        # 5. Static Assets (index.html, style.css, app.js)
+        # 5. API: Get reader data (bookmarks and progress) for a series (/api/reader-data?series=...)
+        if path == "/api/reader-data":
+            series_name = get_param("series")
+            if not series_name:
+                self._send_error("Missing required query parameter: 'series'", HTTPStatus.BAD_REQUEST)
+                return
+
+            data = self.library.get_reader_data(series_name)
+            if data is None:
+                self._send_error(f"Series not found or invalid: {series_name}", HTTPStatus.NOT_FOUND)
+                return
+
+            self._send_json({
+                "series": series_name,
+                "progress": data["progress"],
+                "bookmarks": data["bookmarks"]
+            })
+            return
+
+        # 6. Static Assets (index.html, style.css, app.js)
         clean_path = path.lstrip("/")
         if clean_path.startswith("static/"):
             clean_path = clean_path[len("static/"):]
@@ -261,24 +407,150 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(data)
             return
 
-        # 6. Status / Health Check endpoint
+        # 7. Status / Health Check endpoint
         if path == "/api/status":
             self._send_json({
                 "status": "online",
-                "app": "Local Manga Reader (Phase 2)",
+                "app": "Local Manga Reader (Phase 4)",
                 "library_path": str(self.library.root_path),
                 "library_exists": self.library.exists(),
                 "endpoints": [
                     "/api/series",
                     "/api/chapters?series=<series_name>",
                     "/api/images?series=<series_name>&chapter=<chapter_name>",
-                    "/api/image-file?series=<series_name>&chapter=<chapter_name>&file=<filename>"
+                    "/api/image-file?series=<series_name>&chapter=<chapter_name>&file=<filename>",
+                    "/api/reader-data?series=<series_name>",
+                    "POST /api/progress",
+                    "POST /api/bookmark"
                 ]
             })
             return
 
         # Default 404
         self._send_error("Endpoint not found", HTTPStatus.NOT_FOUND)
+
+    def _read_json_body(self) -> dict | None:
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            if content_length <= 0:
+                return None
+            body_bytes = self.rfile.read(content_length)
+            data = json.loads(body_bytes.decode("utf-8"))
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        # 1. API: Update reading progress (/api/progress)
+        if path == "/api/progress":
+            body = self._read_json_body()
+            if not body:
+                self._send_error("Invalid or missing JSON body", HTTPStatus.BAD_REQUEST)
+                return
+
+            series = body.get("series")
+            chapter = body.get("chapter")
+            image = body.get("image")
+
+            if not series or not chapter or not image:
+                self._send_error("Missing required fields: 'series', 'chapter', 'image'", HTTPStatus.BAD_REQUEST)
+                return
+
+            data = self.library.update_progress(series, chapter, image)
+            if data is None:
+                self._send_error("Invalid series, chapter, or image filename", HTTPStatus.BAD_REQUEST)
+                return
+
+            self._send_json({
+                "success": True,
+                "series": series,
+                "chapter": chapter,
+                "progress": data["progress"],
+                "bookmarks": data["bookmarks"]
+            })
+            return
+
+        # 2. API: Toggle chapter bookmark (/api/bookmark)
+        if path == "/api/bookmark":
+            body = self._read_json_body()
+            if not body:
+                self._send_error("Invalid or missing JSON body", HTTPStatus.BAD_REQUEST)
+                return
+
+            series = body.get("series")
+            chapter = body.get("chapter")
+            bookmarked = body.get("bookmarked")
+
+            if not series or not chapter:
+                self._send_error("Missing required fields: 'series', 'chapter'", HTTPStatus.BAD_REQUEST)
+                return
+
+            data = self.library.toggle_bookmark(series, chapter, bookmarked)
+            if data is None:
+                self._send_error("Invalid series or chapter name", HTTPStatus.BAD_REQUEST)
+                return
+
+            self._send_json({
+                "success": True,
+                "series": series,
+                "chapter": chapter,
+                "bookmarked": chapter in data["bookmarks"],
+                "progress": data["progress"],
+                "bookmarks": data["bookmarks"]
+            })
+            return
+
+        # 3. API: Unified reader data endpoint (/api/reader-data)
+        if path == "/api/reader-data":
+            body = self._read_json_body()
+            if not body:
+                self._send_error("Invalid or missing JSON body", HTTPStatus.BAD_REQUEST)
+                return
+
+            series = body.get("series")
+            chapter = body.get("chapter")
+            action = body.get("action")
+
+            if not series or not chapter:
+                self._send_error("Missing required fields: 'series', 'chapter'", HTTPStatus.BAD_REQUEST)
+                return
+
+            if action == "progress" or "image" in body:
+                image = body.get("image")
+                if not image:
+                    self._send_error("Missing required field: 'image'", HTTPStatus.BAD_REQUEST)
+                    return
+                data = self.library.update_progress(series, chapter, image)
+            elif action == "bookmark" or "bookmarked" in body:
+                bookmarked = body.get("bookmarked")
+                data = self.library.toggle_bookmark(series, chapter, bookmarked)
+            else:
+                self._send_error("Unrecognized action or missing payload in /api/reader-data", HTTPStatus.BAD_REQUEST)
+                return
+
+            if data is None:
+                self._send_error("Failed to update reader data (invalid input)", HTTPStatus.BAD_REQUEST)
+                return
+
+            self._send_json({
+                "success": True,
+                "series": series,
+                "progress": data["progress"],
+                "bookmarks": data["bookmarks"]
+            })
+            return
+
+        self._send_error("Endpoint not found", HTTPStatus.NOT_FOUND)
+
+    def do_OPTIONS(self):
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
 
     def log_message(self, format, *args):
         """Custom concise logging format."""

@@ -117,6 +117,41 @@ class TestHTTPHandler(unittest.TestCase):
         body = response_data[header_end + 4:]
         return headers, body
 
+    def _simulate_post(self, path: str, json_data: dict):
+        body_bytes = json.dumps(json_data).encode("utf-8")
+        raw_request = (
+            f"POST {path} HTTP/1.1\r\n"
+            f"Host: localhost\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: {len(body_bytes)}\r\n\r\n"
+        ).encode("utf-8") + body_bytes
+        sock = MockSocket(raw_request)
+
+        class CustomHandler(self.MangaRequestHandler):
+            def __init__(self, request, client_address, server):
+                self.request = request
+                self.client_address = client_address
+                self.server = server
+                self.setup()
+                try:
+                    self.handle()
+                finally:
+                    self.finish()
+
+            def log_message(self, format, *args):
+                pass
+
+        CustomHandler.library = self.library
+        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler(sock, ("127.0.0.1", 8000), None)
+
+        sock.wfile.seek(0)
+        response_data = sock.wfile.read()
+        header_end = response_data.find(b"\r\n\r\n")
+        headers = response_data[:header_end].decode("utf-8", errors="replace")
+        body = response_data[header_end + 4:]
+        return headers, body
+
     def test_get_series(self):
         headers, body = self._simulate_get("/api/series")
         self.assertIn("200 OK", headers)
@@ -155,6 +190,8 @@ class TestHTTPHandler(unittest.TestCase):
         self.assertIn(b"btn-style-seamless", body)
         self.assertIn(b"reader-loading", body)
         self.assertIn(b"reader-empty", body)
+        # Phase 4 bookmark button
+        self.assertIn(b"btn-reader-bookmark", body)
 
     def test_serve_static_css(self):
         headers, body = self._simulate_get("/style.css")
@@ -167,6 +204,9 @@ class TestHTTPHandler(unittest.TestCase):
         self.assertIn(b"mode-spaced", body)
         self.assertIn(b"mode-seamless", body)
         self.assertIn(b"reader-image", body)
+        # Phase 4 bookmark CSS
+        self.assertIn(b"btn-bookmark", body)
+        self.assertIn(b"badge-bookmark", body)
 
     def test_serve_static_js(self):
         headers, body = self._simulate_get("/app.js")
@@ -179,12 +219,159 @@ class TestHTTPHandler(unittest.TestCase):
         self.assertIn(b"dataset.filename", body)
         self.assertIn(b"readerLoading", body)
         self.assertIn(b"readerEmpty", body)
+        # Phase 4 reader JS
+        self.assertIn(b"fetchReaderData", body)
+        self.assertIn(b"toggleBookmark", body)
+        self.assertIn(b"btnReaderBookmark", body)
 
     def test_api_status(self):
         headers, body = self._simulate_get("/api/status")
         self.assertIn("200 OK", headers)
         data = json.loads(body.decode("utf-8"))
         self.assertEqual(data["status"], "online")
+
+    # ==========================================
+    # Phase 4 Specific Tests
+    # ==========================================
+
+    def test_reader_data_endpoint_default_when_missing(self):
+        """1. Reader data endpoint returns default data when no file exists."""
+        headers, body = self._simulate_get("/api/reader-data?series=OnePiece")
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(data["series"], "OnePiece")
+        self.assertEqual(data["progress"], {})
+        self.assertEqual(data["bookmarks"], [])
+
+    def test_reader_data_can_be_saved_and_retrieved(self):
+        """2. Reader data can be saved and retrieved."""
+        payload = {
+            "progress": {"Chapter 1": "2.jpg"},
+            "bookmarks": ["Chapter 1"]
+        }
+        success = self.library.save_reader_data("OnePiece", payload)
+        self.assertTrue(success)
+
+        headers, body = self._simulate_get("/api/reader-data?series=OnePiece")
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(data["progress"], {"Chapter 1": "2.jpg"})
+        self.assertEqual(data["bookmarks"], ["Chapter 1"])
+
+    def test_progress_stored_by_chapter_and_filename(self):
+        """3. Progress is stored by chapter and filename."""
+        headers, body = self._simulate_post("/api/progress", {
+            "series": "OnePiece",
+            "chapter": "Chapter 1",
+            "image": "10.jpg"
+        })
+        self.assertIn("200 OK", headers)
+        resp = json.loads(body.decode("utf-8"))
+        self.assertTrue(resp["success"])
+        self.assertEqual(resp["progress"]["Chapter 1"], "10.jpg")
+
+        # Verify on filesystem via GET
+        headers, body = self._simulate_get("/api/reader-data?series=OnePiece")
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(data["progress"]["Chapter 1"], "10.jpg")
+
+    def test_bookmark_can_be_added_and_removed(self):
+        """4. Bookmarks can be added and removed."""
+        # Add bookmark
+        headers, body = self._simulate_post("/api/bookmark", {
+            "series": "OnePiece",
+            "chapter": "Chapter 1",
+            "bookmarked": True
+        })
+        self.assertIn("200 OK", headers)
+        resp = json.loads(body.decode("utf-8"))
+        self.assertTrue(resp["bookmarked"])
+        self.assertIn("Chapter 1", resp["bookmarks"])
+
+        # Remove bookmark
+        headers, body = self._simulate_post("/api/bookmark", {
+            "series": "OnePiece",
+            "chapter": "Chapter 1",
+            "bookmarked": False
+        })
+        self.assertIn("200 OK", headers)
+        resp = json.loads(body.decode("utf-8"))
+        self.assertFalse(resp["bookmarked"])
+        self.assertNotIn("Chapter 1", resp["bookmarks"])
+
+    def test_multiple_chapters_independent_progress(self):
+        """5. Multiple chapters can have independent progress."""
+        # Create Chapter 2
+        ch2 = self.lib_path / "OnePiece" / "Chapter 2"
+        ch2.mkdir(parents=True, exist_ok=True)
+        (ch2 / "01.jpg").write_bytes(b"dummy")
+
+        self.library.update_progress("OnePiece", "Chapter 1", "2.jpg")
+        self.library.update_progress("OnePiece", "Chapter 2", "01.jpg")
+
+        data = self.library.get_reader_data("OnePiece")
+        self.assertEqual(data["progress"]["Chapter 1"], "2.jpg")
+        self.assertEqual(data["progress"]["Chapter 2"], "01.jpg")
+
+    def test_multiple_chapters_bookmarked(self):
+        """6. Multiple chapters can be bookmarked."""
+        ch2 = self.lib_path / "OnePiece" / "Chapter 2"
+        ch2.mkdir(parents=True, exist_ok=True)
+        (ch2 / "01.jpg").write_bytes(b"dummy")
+
+        self.library.toggle_bookmark("OnePiece", "Chapter 1", True)
+        self.library.toggle_bookmark("OnePiece", "Chapter 2", True)
+
+        data = self.library.get_reader_data("OnePiece")
+        self.assertEqual(data["bookmarks"], ["Chapter 1", "Chapter 2"])
+
+    def test_missing_reader_data_handled_correctly(self):
+        """7. Missing .reader/reader_data.json is handled correctly."""
+        reader_file = self.lib_path / "OnePiece" / ".reader" / "reader_data.json"
+        if reader_file.exists():
+            reader_file.unlink()
+
+        data = self.library.get_reader_data("OnePiece")
+        self.assertEqual(data, {"progress": {}, "bookmarks": []})
+
+    def test_malformed_json_handled_gracefully(self):
+        """8. Malformed JSON is handled gracefully."""
+        reader_dir = self.lib_path / "OnePiece" / ".reader"
+        reader_dir.mkdir(parents=True, exist_ok=True)
+        (reader_dir / "reader_data.json").write_text("{corrupt-json", encoding="utf-8")
+
+        data = self.library.get_reader_data("OnePiece")
+        self.assertEqual(data, {"progress": {}, "bookmarks": []})
+
+    def test_path_traversal_and_invalid_inputs_rejected(self):
+        """9. Path traversal / invalid series or chapter input is rejected."""
+        # Unsafe GET
+        headers, _ = self._simulate_get("/api/reader-data?series=../../etc")
+        self.assertIn("404", headers)
+
+        # Unsafe progress series
+        headers, _ = self._simulate_post("/api/progress", {
+            "series": "../../etc",
+            "chapter": "Chapter 1",
+            "image": "1.jpg"
+        })
+        self.assertIn("400", headers)
+
+        # Unsafe progress image filename
+        headers, _ = self._simulate_post("/api/progress", {
+            "series": "OnePiece",
+            "chapter": "Chapter 1",
+            "image": "../../../etc/passwd"
+        })
+        self.assertIn("400", headers)
+
+        # Unsafe bookmark series
+        headers, _ = self._simulate_post("/api/bookmark", {
+            "series": "../OnePiece",
+            "chapter": "Chapter 1",
+            "bookmarked": True
+        })
+        self.assertIn("400", headers)
 
 
 if __name__ == "__main__":

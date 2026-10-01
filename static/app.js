@@ -1,5 +1,5 @@
 /**
- * Local Manga Reader - Vanilla Frontend (Phase 3)
+ * Local Manga Reader - Vanilla Frontend (Phase 4: Progress & Bookmarks)
  */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -28,6 +28,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const readerFooter = document.getElementById("reader-footer");
   const btnReaderBack = document.getElementById("btn-reader-back");
   const btnReaderBottomBack = document.getElementById("btn-reader-bottom-back");
+  const btnReaderBookmark = document.getElementById("btn-reader-bookmark");
   const btnStyleSpaced = document.getElementById("btn-style-spaced");
   const btnStyleSeamless = document.getElementById("btn-style-seamless");
 
@@ -40,6 +41,15 @@ document.addEventListener("DOMContentLoaded", () => {
   // State
   let currentSeries = null;
   let currentChapter = null;
+  let currentSeriesBookmarks = new Set();
+  let currentSeriesProgress = {};
+
+  // Reading progress observer state
+  let readerObserver = null;
+  let currentVisibleImage = null;
+  let saveProgressTimeout = null;
+  let isInitialResume = false;
+
   // Persist reading style across chapters within the current session
   let currentReadingStyle = sessionStorage.getItem("manga_reader_style") || "spaced";
 
@@ -61,9 +71,18 @@ document.addEventListener("DOMContentLoaded", () => {
     viewLibrary.classList.toggle("hidden", viewName !== "library");
     viewChapters.classList.toggle("hidden", viewName !== "chapters");
     viewReader.classList.toggle("hidden", viewName !== "reader");
+
     if (viewName !== "reader") {
       readerLoading.classList.add("hidden");
       if (readerEmpty) readerEmpty.classList.add("hidden");
+      if (readerObserver) {
+        readerObserver.disconnect();
+        readerObserver = null;
+      }
+      if (saveProgressTimeout) {
+        clearTimeout(saveProgressTimeout);
+        saveProgressTimeout = null;
+      }
     }
     window.scrollTo({ top: 0, behavior: "instant" });
   }
@@ -109,6 +128,47 @@ document.addEventListener("DOMContentLoaded", () => {
         breadcrumbs.appendChild(current);
       }
     });
+  }
+
+  // API Helper: Fetch Reader Data (Bookmarks & Progress)
+  async function fetchReaderData(seriesName) {
+    try {
+      const res = await fetch(`/api/reader-data?series=${encodeURIComponent(seriesName)}`);
+      if (!res.ok) return { progress: {}, bookmarks: [] };
+      return await res.json();
+    } catch {
+      return { progress: {}, bookmarks: [] };
+    }
+  }
+
+  // API Helper: Toggle Bookmark
+  async function toggleBookmark(seriesName, chapterName, shouldBookmark = null) {
+    try {
+      const res = await fetch("/api/bookmark", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          series: seriesName,
+          chapter: chapterName,
+          bookmarked: shouldBookmark
+        })
+      });
+      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+      const data = await res.json();
+      currentSeriesBookmarks = new Set(data.bookmarks || []);
+      return data;
+    } catch (err) {
+      showError(`Failed to update bookmark: ${err.message}`);
+      return null;
+    }
+  }
+
+  // Update Reader Bookmark Button in Header
+  function updateReaderBookmarkButton(chapterName) {
+    const isBookmarked = currentSeriesBookmarks.has(chapterName);
+    btnReaderBookmark.classList.toggle("bookmarked", isBookmarked);
+    btnReaderBookmark.title = isBookmarked ? "Remove bookmark" : "Bookmark this chapter";
+    btnReaderBookmark.setAttribute("aria-label", isBookmarked ? "Remove bookmark" : "Bookmark this chapter");
   }
 
   // 1. Load Library View
@@ -171,7 +231,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // 2. Load Chapters View
+  // 2. Load Chapters View (shows Bookmarks and Reading Progress)
   async function loadChapters(seriesName) {
     currentSeries = seriesName;
     switchView("chapters");
@@ -186,9 +246,16 @@ document.addEventListener("DOMContentLoaded", () => {
     ]);
 
     try {
-      const res = await fetch(`/api/chapters?series=${encodeURIComponent(seriesName)}`);
-      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-      const data = await res.json();
+      const [chaptersRes, readerData] = await Promise.all([
+        fetch(`/api/chapters?series=${encodeURIComponent(seriesName)}`),
+        fetchReaderData(seriesName)
+      ]);
+
+      if (!chaptersRes.ok) throw new Error(`HTTP error ${chaptersRes.status}`);
+      const data = await chaptersRes.json();
+
+      currentSeriesBookmarks = new Set(readerData.bookmarks || []);
+      currentSeriesProgress = readerData.progress || {};
 
       const chapters = data.chapters || [];
       chaptersList.innerHTML = "";
@@ -199,7 +266,9 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      seriesMeta.textContent = `${chapters.length} ${chapters.length === 1 ? "chapter" : "chapters"}`;
+      const bookmarkCount = currentSeriesBookmarks.size;
+      const countText = `${chapters.length} ${chapters.length === 1 ? "chapter" : "chapters"}`;
+      seriesMeta.textContent = bookmarkCount > 0 ? `${countText} • ${bookmarkCount} bookmarked` : countText;
 
       chapters.forEach((ch) => {
         const item = document.createElement("div");
@@ -207,15 +276,19 @@ document.addEventListener("DOMContentLoaded", () => {
         item.setAttribute("role", "button");
         item.setAttribute("tabindex", "0");
 
+        const isBookmarked = currentSeriesBookmarks.has(ch.name);
+
         item.innerHTML = `
           <div class="chapter-info">
-            <svg class="chapter-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-            </svg>
+            <button class="btn-chapter-bookmark ${isBookmarked ? "bookmarked" : ""}" title="${isBookmarked ? "Remove bookmark" : "Bookmark chapter"}" aria-label="Bookmark">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+              </svg>
+            </button>
             <span class="chapter-title">${escapeHtml(ch.name)}</span>
+            ${isBookmarked ? `<span class="badge badge-bookmark"><svg viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>Bookmarked</span>` : ""}
           </div>
-          <div style="display: flex; align-items: center; gap: 12px;">
+          <div class="chapter-actions">
             <span class="badge">${ch.image_count} pages</span>
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" class="chapter-arrow">
               <path d="M9 18l6-6-6-6"/>
@@ -223,6 +296,18 @@ document.addEventListener("DOMContentLoaded", () => {
           </div>
         `;
 
+        // Bookmark button click
+        const bookmarkBtn = item.querySelector(".btn-chapter-bookmark");
+        bookmarkBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const willBookmark = !currentSeriesBookmarks.has(ch.name);
+          const result = await toggleBookmark(seriesName, ch.name, willBookmark);
+          if (result) {
+            loadChapters(seriesName);
+          }
+        });
+
+        // Row click navigates to chapter reader
         item.addEventListener("click", () => {
           window.location.hash = `#/read/${encodeURIComponent(seriesName)}/${encodeURIComponent(ch.name)}`;
         });
@@ -235,7 +320,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // 3. Load Real Vertical Scroll Reader View (Phase 3)
+  // 3. Load Real Vertical Scroll Reader View with Reading Progress and Bookmark
   async function loadReader(seriesName, chapterName) {
     currentSeries = seriesName;
     currentChapter = chapterName;
@@ -248,6 +333,17 @@ document.addEventListener("DOMContentLoaded", () => {
     if (readerEmpty) readerEmpty.classList.add("hidden");
     readerLoading.classList.remove("hidden");
 
+    // Clear previous observer and pending saves
+    if (readerObserver) {
+      readerObserver.disconnect();
+      readerObserver = null;
+    }
+    if (saveProgressTimeout) {
+      clearTimeout(saveProgressTimeout);
+      saveProgressTimeout = null;
+    }
+    currentVisibleImage = null;
+
     // Apply stored reading style (Spaced vs Seamless)
     applyReadingStyle(currentReadingStyle);
 
@@ -258,9 +354,19 @@ document.addEventListener("DOMContentLoaded", () => {
     ]);
 
     try {
-      const res = await fetch(`/api/images?series=${encodeURIComponent(seriesName)}&chapter=${encodeURIComponent(chapterName)}`);
-      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-      const data = await res.json();
+      const [imagesRes, readerData] = await Promise.all([
+        fetch(`/api/images?series=${encodeURIComponent(seriesName)}&chapter=${encodeURIComponent(chapterName)}`),
+        fetchReaderData(seriesName)
+      ]);
+
+      if (!imagesRes.ok) throw new Error(`HTTP error ${imagesRes.status}`);
+      const data = await imagesRes.json();
+
+      currentSeriesBookmarks = new Set(readerData.bookmarks || []);
+      currentSeriesProgress = readerData.progress || {};
+
+      // Update Reader Bookmark Button
+      updateReaderBookmarkButton(chapterName);
 
       const images = data.images || [];
 
@@ -279,7 +385,7 @@ document.addEventListener("DOMContentLoaded", () => {
       images.forEach((img) => {
         const pageDiv = document.createElement("div");
         pageDiv.className = "reader-page";
-        // Identified by filename in DOM for Phase 4 progress tracking
+        // Identified by filename in DOM for progress tracking
         pageDiv.id = `page-${img.filename}`;
         pageDiv.dataset.filename = img.filename;
 
@@ -296,6 +402,87 @@ document.addEventListener("DOMContentLoaded", () => {
       });
 
       readerFooter.classList.remove("hidden");
+
+      // Resume reading progress
+      const savedImage = currentSeriesProgress[chapterName];
+      let targetPage = null;
+      if (savedImage) {
+        targetPage = document.getElementById(`page-${savedImage}`);
+      }
+
+      if (targetPage) {
+        currentVisibleImage = savedImage;
+        isInitialResume = true;
+        targetPage.scrollIntoView({ behavior: "instant", block: "start" });
+        setTimeout(() => {
+          isInitialResume = false;
+        }, 300);
+      } else {
+        currentVisibleImage = images[0] ? images[0].filename : null;
+        isInitialResume = false;
+      }
+
+      // Track reading progress with IntersectionObserver
+      const pageElements = readerContainer.querySelectorAll(".reader-page");
+      const visiblePages = new Map();
+
+      readerObserver = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            visiblePages.set(entry.target, entry.boundingClientRect.top);
+          } else {
+            visiblePages.delete(entry.target);
+          }
+        });
+
+        if (isInitialResume || visiblePages.size === 0) return;
+
+        // Choose page currently closest to upper reading line
+        let bestPage = null;
+        let bestTop = -Infinity;
+
+        for (const [pageEl, top] of visiblePages.entries()) {
+          if (top <= window.innerHeight * 0.6) {
+            if (top > bestTop) {
+              bestTop = top;
+              bestPage = pageEl;
+            }
+          }
+        }
+
+        if (!bestPage) {
+          bestPage = visiblePages.keys().next().value;
+        }
+
+        if (bestPage) {
+          const filename = bestPage.dataset.filename;
+          if (filename && filename !== currentVisibleImage) {
+            currentVisibleImage = filename;
+
+            // Debounced save (~750ms after scrolling settles)
+            clearTimeout(saveProgressTimeout);
+            saveProgressTimeout = setTimeout(() => {
+              fetch("/api/progress", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  series: seriesName,
+                  chapter: chapterName,
+                  image: filename
+                })
+              }).catch((err) => {
+                console.warn("Failed to persist reading progress:", err);
+              });
+            }, 750);
+          }
+        }
+      }, {
+        root: null,
+        threshold: [0, 0.25, 0.5, 0.75, 1.0]
+      });
+
+      pageElements.forEach((el) => readerObserver.observe(el));
+
     } catch (err) {
       readerLoading.classList.add("hidden");
       if (readerEmpty) readerEmpty.classList.add("hidden");
@@ -363,6 +550,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
   btnReaderBack.addEventListener("click", navigateBackToChapters);
   btnReaderBottomBack.addEventListener("click", navigateBackToChapters);
+
+  // Reader Bookmark Toggle Button in Header
+  btnReaderBookmark.addEventListener("click", async () => {
+    if (!currentSeries || !currentChapter) return;
+    const willBookmark = !currentSeriesBookmarks.has(currentChapter);
+    const result = await toggleBookmark(currentSeries, currentChapter, willBookmark);
+    if (result) {
+      updateReaderBookmarkButton(currentChapter);
+    }
+  });
 
   // Style Toggle Buttons (Spaced vs Seamless)
   btnStyleSpaced.addEventListener("click", () => {

@@ -473,6 +473,90 @@ html, body {
   text-overflow: ellipsis;
 }
 
+.reader-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-bookmark {
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-tertiary);
+  padding: 6px;
+  min-height: 32px;
+  width: 32px;
+}
+
+.btn-bookmark:hover {
+  color: #eab308;
+  border-color: #eab308;
+}
+
+.btn-bookmark.bookmarked {
+  color: #eab308;
+  background-color: rgba(234, 179, 8, 0.15);
+  border-color: rgba(234, 179, 8, 0.4);
+}
+
+.btn-bookmark.bookmarked .bookmark-icon {
+  fill: currentColor;
+}
+
+.bookmark-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Chapter List Bookmarks */
+.chapter-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.btn-chapter-bookmark {
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.btn-chapter-bookmark:hover {
+  color: #eab308;
+  background-color: rgba(234, 179, 8, 0.1);
+  border-color: rgba(234, 179, 8, 0.25);
+}
+
+.btn-chapter-bookmark.bookmarked {
+  color: #eab308;
+}
+
+.btn-chapter-bookmark.bookmarked svg {
+  fill: currentColor;
+}
+
+.badge-bookmark {
+  background-color: rgba(234, 179, 8, 0.15);
+  color: #eab308;
+  border-color: rgba(234, 179, 8, 0.35);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.badge-bookmark svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
 /* Style Switcher (Segmented Control) */
 .style-toggle {
   display: inline-flex;
