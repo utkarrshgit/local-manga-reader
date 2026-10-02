@@ -1565,7 +1565,7 @@ if [ "$1" = "server.py" ]; then
     trap "echo SERVER_SHUTDOWN >> {server_log}; exit 0" INT TERM
     while true; do sleep 0.1; done
 else
-    exec /usr/bin/python3 "$@"
+    exec {sys.executable} "$@"
 fi
 """)
             os.chmod(os.path.join(mock_bin, "python3"), 0o755)
@@ -1730,6 +1730,217 @@ class TestWindowsLauncher(unittest.TestCase):
                 os.environ["LOCALAPPDATA"] = orig_localappdata
             else:
                 os.environ.pop("LOCALAPPDATA", None)
+
+
+class TestLinuxLauncher(unittest.TestCase):
+    def setUp(self):
+        self.project_dir = Path(__file__).parent.resolve()
+        self.launcher_path = self.project_dir / "start-linux.sh"
+
+    def test_linux_launcher_attributes_and_no_hardcoded_paths(self):
+        """Verify start-linux.sh existence, executable permissions, and dynamic paths."""
+        self.assertTrue(self.launcher_path.exists(), "start-linux.sh does not exist")
+        self.assertTrue(os.access(self.launcher_path, os.X_OK), "start-linux.sh is not executable")
+
+        content = self.launcher_path.read_text(encoding="utf-8")
+        self.assertNotIn("/Users/utkarshjaiswal", content)
+        self.assertNotIn("utkarshjaiswal", content)
+
+        # Dynamic location
+        self.assertIn('dirname "$0"', content)
+
+        # Config location
+        self.assertIn("LocalMangaReader", content)
+        self.assertIn("library_path", content)
+        self.assertIn(".config", content)
+
+        # Python 3 detection
+        self.assertIn("python3", content)
+
+        # Native Linux pickers and fallback
+        self.assertIn("zenity", content)
+        self.assertIn("kdialog", content)
+
+        # Readiness polling & xdg-open browser
+        self.assertIn("/api/status", content)
+        self.assertIn("xdg-open", content)
+
+        # Server invocation
+        self.assertIn("server.py", content)
+        self.assertIn("--dir", content)
+
+    def test_server_linux_config_path_resolution(self):
+        """Verify get_config_file_path() resolves to ~/.config/LocalMangaReader/library_path on Linux."""
+        from server import get_config_file_path
+        orig_platform = sys.platform
+        orig_env_file = os.environ.get("LOCAL_MANGA_CONFIG_FILE")
+        orig_env_dir = os.environ.get("LOCAL_MANGA_CONFIG_DIR")
+        orig_xdg = os.environ.get("XDG_CONFIG_HOME")
+
+        try:
+            sys.platform = "linux"
+            os.environ.pop("LOCAL_MANGA_CONFIG_FILE", None)
+            os.environ.pop("LOCAL_MANGA_CONFIG_DIR", None)
+
+            # Test with custom XDG_CONFIG_HOME
+            os.environ["XDG_CONFIG_HOME"] = "/custom/xdg_config"
+            resolved = get_config_file_path()
+            self.assertEqual(resolved, Path("/custom/xdg_config/LocalMangaReader/library_path"))
+
+            # Test default ~/.config
+            os.environ.pop("XDG_CONFIG_HOME", None)
+            resolved_default = get_config_file_path()
+            self.assertEqual(resolved_default, Path(os.path.expanduser("~/.config/LocalMangaReader/library_path")))
+        finally:
+            sys.platform = orig_platform
+            if orig_env_file:
+                os.environ["LOCAL_MANGA_CONFIG_FILE"] = orig_env_file
+            if orig_env_dir:
+                os.environ["LOCAL_MANGA_CONFIG_DIR"] = orig_env_dir
+            if orig_xdg:
+                os.environ["XDG_CONFIG_HOME"] = orig_xdg
+            else:
+                os.environ.pop("XDG_CONFIG_HOME", None)
+
+    def test_linux_launcher_lifecycle(self):
+        """Test start-linux.sh lifecycle: first launch, config persistence, missing folder, MANGA_DIR, and cancellation."""
+        with tempfile.TemporaryDirectory() as base_tmp:
+            config_dir = os.path.join(base_tmp, "config")
+            config_file = os.path.join(config_dir, "library_path")
+            lib1 = os.path.join(base_tmp, "library1")
+            lib2 = os.path.join(base_tmp, "library2")
+            os.makedirs(lib1)
+            os.makedirs(lib2)
+
+            mock_bin = os.path.join(base_tmp, "mock_bin")
+            os.makedirs(mock_bin)
+
+            browser_log = os.path.join(base_tmp, "browser.log")
+            with open(os.path.join(mock_bin, "xdg-open"), "w") as f:
+                f.write(f'#!/bin/sh\necho "$@" >> {browser_log}\n')
+            os.chmod(os.path.join(mock_bin, "xdg-open"), 0o755)
+
+            # Mock curl for instant status
+            with open(os.path.join(mock_bin, "curl"), "w") as f:
+                f.write("#!/bin/sh\nexit 0\n")
+            os.chmod(os.path.join(mock_bin, "curl"), 0o755)
+
+            # Mock server execution via python3 wrapper
+            server_log = os.path.join(base_tmp, "server.log")
+            with open(os.path.join(mock_bin, "python3"), "w") as f:
+                f.write(f"""#!/bin/sh
+if [ "$1" = "server.py" ]; then
+    echo "SERVER STARTED: $@" >> {server_log}
+    trap "echo SERVER_SHUTDOWN >> {server_log}; exit 0" INT TERM
+    while true; do sleep 0.1; done
+else
+    exec {sys.executable} "$@"
+fi
+""")
+            os.chmod(os.path.join(mock_bin, "python3"), 0o755)
+
+            base_env = dict(os.environ)
+            base_env.pop("MANGA_DIR", None)
+            base_env["LOCAL_MANGA_CONFIG_DIR"] = config_dir
+            base_env["PATH"] = mock_bin + ":" + base_env.get("PATH", "")
+
+            def wait_for_file(filepath, timeout=2.5):
+                start = time.time()
+                while time.time() - start < timeout:
+                    if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                        return True
+                    time.sleep(0.05)
+                return False
+
+            # 1. First launch with no configuration
+            env1 = dict(base_env)
+            env1["MOCK_FOLDER_PICKER_RESULT"] = lib1 + "/"
+            p1 = subprocess.Popen([str(self.launcher_path)], env=env1, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            wait_for_file(server_log)
+            p1.terminate()
+            p1.wait(timeout=3)
+            p1.stdout.close()
+            p1.stderr.close()
+
+            self.assertTrue(os.path.exists(config_file), "Config file was not created on first launch")
+            with open(config_file) as f:
+                saved = f.read().strip()
+            self.assertEqual(saved, lib1)
+            with open(browser_log) as f:
+                self.assertIn("http://localhost:8000", f.read())
+            with open(server_log) as f:
+                slog = f.read()
+                self.assertIn(f"--dir {lib1}", slog)
+                self.assertIn("SERVER_SHUTDOWN", slog)
+
+            # 2. Subsequent launch with saved configuration
+            os.remove(browser_log)
+            os.remove(server_log)
+            env2 = dict(base_env)
+            env2["MOCK_FOLDER_PICKER_RESULT"] = "/should/not/be/used"
+            p2 = subprocess.Popen([str(self.launcher_path)], env=env2, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            wait_for_file(server_log)
+            p2.terminate()
+            p2.wait(timeout=3)
+            p2.stdout.close()
+            p2.stderr.close()
+
+            with open(config_file) as f:
+                self.assertEqual(f.read().strip(), lib1)
+            with open(server_log) as f:
+                self.assertIn(f"--dir {lib1}", f.read())
+
+            # 3. Missing/deleted configured folder prompts picker again and updates config
+            os.remove(browser_log)
+            os.remove(server_log)
+            shutil.rmtree(lib1)
+            env3 = dict(base_env)
+            env3["MOCK_FOLDER_PICKER_RESULT"] = lib2
+            p3 = subprocess.Popen([str(self.launcher_path)], env=env3, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            wait_for_file(server_log)
+            p3.terminate()
+            p3.wait(timeout=3)
+            p3.stdout.close()
+            p3.stderr.close()
+
+            with open(config_file) as f:
+                self.assertEqual(f.read().strip(), lib2)
+            with open(server_log) as f:
+                self.assertIn(f"--dir {lib2}", f.read())
+
+            # 4. External manga directory via MANGA_DIR environment variable
+            os.remove(browser_log)
+            os.remove(server_log)
+            ext_lib = os.path.join(base_tmp, "ext_manga")
+            os.makedirs(ext_lib)
+            env4 = dict(base_env)
+            env4["MANGA_DIR"] = ext_lib
+            p4 = subprocess.Popen([str(self.launcher_path)], env=env4, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            wait_for_file(server_log)
+            p4.terminate()
+            p4.wait(timeout=3)
+            p4.stdout.close()
+            p4.stderr.close()
+
+            with open(config_file) as f:
+                self.assertEqual(f.read().strip(), lib2, "MANGA_DIR should not overwrite config file")
+            with open(server_log) as f:
+                self.assertIn(f"--dir {ext_lib}", f.read())
+
+            # 5. Invalid MANGA_DIR shows clear error and exits with 1
+            env5 = dict(base_env)
+            env5["MANGA_DIR"] = "/nonexistent/manga_dir_test_404"
+            r5 = subprocess.run([str(self.launcher_path)], env=env5, capture_output=True, text=True, input="")
+            self.assertEqual(r5.returncode, 1)
+            self.assertIn("[ERROR] Specified MANGA_DIR does not exist!", r5.stdout)
+
+            # 6. User cancellation on initial launch exits cleanly
+            os.remove(config_file)
+            env6 = dict(base_env)
+            env6["MOCK_FOLDER_PICKER_RESULT"] = ""
+            r6 = subprocess.run([str(self.launcher_path)], env=env6, capture_output=True, text=True, input="")
+            self.assertEqual(r6.returncode, 0)
+            self.assertIn("No manga library folder selected.", r6.stdout)
 
 
 if __name__ == "__main__":

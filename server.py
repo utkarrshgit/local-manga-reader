@@ -9,6 +9,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import subprocess
 import sys
 from http import HTTPStatus
@@ -28,6 +29,9 @@ def get_config_file_path() -> Path:
     if sys.platform == "win32":
         local_app_data = os.environ.get("LOCALAPPDATA", os.path.expanduser(r"~\AppData\Local"))
         return Path(local_app_data) / "LocalMangaReader" / "library_path"
+    if sys.platform.startswith("linux"):
+        xdg_config_home = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+        return Path(xdg_config_home) / "LocalMangaReader" / "library_path"
     return Path(os.path.expanduser("~/Library/Application Support/LocalMangaReader")) / "library_path"
 
 
@@ -94,6 +98,37 @@ def choose_folder_native(prompt: str = "Select your Manga library folder:") -> s
             return None
         except Exception:
             return None
+
+    if sys.platform.startswith("linux"):
+        if shutil.which("zenity"):
+            try:
+                proc = subprocess.run(
+                    ["zenity", "--file-selection", "--directory", f"--title={prompt}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                if proc.returncode == 0:
+                    chosen = proc.stdout.strip()
+                    return chosen if chosen else None
+                return None
+            except Exception:
+                pass
+        if shutil.which("kdialog"):
+            try:
+                proc = subprocess.run(
+                    ["kdialog", "--getexistingdirectory", os.path.expanduser("~"), f"--title={prompt}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                if proc.returncode == 0:
+                    chosen = proc.stdout.strip()
+                    return chosen if chosen else None
+                return None
+            except Exception:
+                pass
+        return None
 
     script = f'''
     tell application "System Events"
