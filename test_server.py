@@ -152,6 +152,72 @@ class TestHTTPHandler(unittest.TestCase):
         body = response_data[header_end + 4:]
         return headers, body
 
+    def _simulate_post_binary(self, path: str, raw_bytes: bytes, content_type: str = "image/jpeg"):
+        raw_request = (
+            f"POST {path} HTTP/1.1\r\n"
+            f"Host: localhost\r\n"
+            f"Content-Type: {content_type}\r\n"
+            f"Content-Length: {len(raw_bytes)}\r\n\r\n"
+        ).encode("utf-8") + raw_bytes
+        sock = MockSocket(raw_request)
+
+        class CustomHandler(self.MangaRequestHandler):
+            def __init__(self, request, client_address, server):
+                self.request = request
+                self.client_address = client_address
+                self.server = server
+                self.setup()
+                try:
+                    self.handle()
+                finally:
+                    self.finish()
+
+            def log_message(self, format, *args):
+                pass
+
+        CustomHandler.library = self.library
+        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler(sock, ("127.0.0.1", 8000), None)
+
+        sock.wfile.seek(0)
+        response_data = sock.wfile.read()
+        header_end = response_data.find(b"\r\n\r\n")
+        headers = response_data[:header_end].decode("utf-8", errors="replace")
+        body = response_data[header_end + 4:]
+        return headers, body
+
+    def _simulate_delete(self, path: str):
+        raw_request = (
+            f"DELETE {path} HTTP/1.1\r\n"
+            f"Host: localhost\r\n\r\n"
+        ).encode("utf-8")
+        sock = MockSocket(raw_request)
+
+        class CustomHandler(self.MangaRequestHandler):
+            def __init__(self, request, client_address, server):
+                self.request = request
+                self.client_address = client_address
+                self.server = server
+                self.setup()
+                try:
+                    self.handle()
+                finally:
+                    self.finish()
+
+            def log_message(self, format, *args):
+                pass
+
+        CustomHandler.library = self.library
+        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler(sock, ("127.0.0.1", 8000), None)
+
+        sock.wfile.seek(0)
+        response_data = sock.wfile.read()
+        header_end = response_data.find(b"\r\n\r\n")
+        headers = response_data[:header_end].decode("utf-8", errors="replace")
+        body = response_data[header_end + 4:]
+        return headers, body
+
     def test_get_series(self):
         headers, body = self._simulate_get("/api/series")
         self.assertIn("200 OK", headers)
@@ -457,6 +523,70 @@ class TestPhase6Features(unittest.TestCase):
         body = parts[1] if len(parts) > 1 else b""
         return headers, body
 
+    def _simulate_post_binary(self, path: str, raw_bytes: bytes, content_type: str = "image/jpeg"):
+        raw_request = (
+            f"POST {path} HTTP/1.1\r\n"
+            f"Host: localhost\r\n"
+            f"Content-Type: {content_type}\r\n"
+            f"Content-Length: {len(raw_bytes)}\r\n\r\n"
+        ).encode("utf-8") + raw_bytes
+        sock = MockSocket(raw_request)
+
+        class CustomHandler(self.MangaRequestHandler):
+            def __init__(self, request, client_address, server):
+                self.request = request
+                self.client_address = client_address
+                self.server = server
+                self.setup()
+                try:
+                    self.handle()
+                finally:
+                    self.finish()
+
+            def log_message(self, format, *args):
+                pass
+
+        CustomHandler.library = self.library
+        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler(sock, ("127.0.0.1", 8000), None)
+
+        output = sock.wfile.getvalue()
+        parts = output.split(b"\r\n\r\n", 1)
+        headers = parts[0].decode("utf-8", errors="replace")
+        body = parts[1] if len(parts) > 1 else b""
+        return headers, body
+
+    def _simulate_delete(self, path: str):
+        raw_request = (
+            f"DELETE {path} HTTP/1.1\r\n"
+            f"Host: localhost\r\n\r\n"
+        ).encode("utf-8")
+        sock = MockSocket(raw_request)
+
+        class CustomHandler(self.MangaRequestHandler):
+            def __init__(self, request, client_address, server):
+                self.request = request
+                self.client_address = client_address
+                self.server = server
+                self.setup()
+                try:
+                    self.handle()
+                finally:
+                    self.finish()
+
+            def log_message(self, format, *args):
+                pass
+
+        CustomHandler.library = self.library
+        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler(sock, ("127.0.0.1", 8000), None)
+
+        output = sock.wfile.getvalue()
+        parts = output.split(b"\r\n\r\n", 1)
+        headers = parts[0].decode("utf-8", errors="replace")
+        body = parts[1] if len(parts) > 1 else b""
+        return headers, body
+
     def test_series_cover_jpg_priority(self):
         """1. <SeriesDirectory>/cover.jpg is used when it exists."""
         series_dir = self.lib_path / "Solo Leveling"
@@ -708,6 +838,505 @@ class TestPhase6Features(unittest.TestCase):
         self.assertEqual(data["bookmarks"], ["Chapter 1"])
         self.assertEqual(data["reader"]["style"], "spaced")
 
+    # ==========================================
+    # Series Metadata Feature Tests
+    # ==========================================
+
+    def test_metadata_persistence_and_retrieval(self):
+        """19. Metadata (summary, author, links) persists and retrieves correctly while preserving reader state."""
+        series_dir = self.lib_path / "MetaSeries"
+        chapter_dir = series_dir / "Chapter 1"
+        chapter_dir.mkdir(parents=True, exist_ok=True)
+        (chapter_dir / "001.jpg").write_bytes(b"DATA")
+
+        # Set initial progress and bookmark
+        self.library.update_progress("MetaSeries", "Chapter 1", "001.jpg")
+        self.library.toggle_bookmark("MetaSeries", "Chapter 1", True)
+
+        # Update metadata via library method
+        links = {
+            "AniList": "https://anilist.co/manga/105398",
+            "MyAnimeList": "https://myanimelist.net/manga/121496",
+            "MangaDex": "https://mangadex.org/title/sololeveling"
+        }
+        res = self.library.update_metadata(
+            "MetaSeries",
+            summary="A hunter rises from the weakest rank.",
+            author="Chugong",
+            links=links
+        )
+        self.assertIsNotNone(res)
+        self.assertEqual(res["summary"], "A hunter rises from the weakest rank.")
+        self.assertEqual(res["author"], "Chugong")
+        self.assertEqual(res["links"], links)
+        # Verify reader state preserved
+        self.assertEqual(res["progress"], {"Chapter 1": "001.jpg"})
+        self.assertEqual(res["bookmarks"], ["Chapter 1"])
+
+        # Check raw json file on disk
+        json_file = series_dir / ".reader" / "reader_data.json"
+        self.assertTrue(json_file.is_file())
+        file_data = json.loads(json_file.read_text(encoding="utf-8"))
+        self.assertEqual(file_data["author"], "Chugong")
+        self.assertEqual(file_data["summary"], "A hunter rises from the weakest rank.")
+        self.assertEqual(file_data["links"], links)
+        self.assertEqual(file_data["progress"], {"Chapter 1": "001.jpg"})
+        self.assertEqual(file_data["bookmarks"], ["Chapter 1"])
+
+        # Retrieve via GET /api/reader-data
+        headers, body = self._simulate_get("/api/reader-data?series=MetaSeries")
+        self.assertIn("200 OK", headers)
+        get_data = json.loads(body.decode("utf-8"))
+        self.assertEqual(get_data["author"], "Chugong")
+        self.assertEqual(get_data["summary"], "A hunter rises from the weakest rank.")
+        self.assertEqual(get_data["links"], links)
+
+    def test_metadata_endpoint_post_and_get(self):
+        """20. POST /api/reader-data with action='metadata' updates metadata successfully."""
+        series_dir = self.lib_path / "ApiMetaSeries"
+        series_dir.mkdir(parents=True, exist_ok=True)
+
+        payload = {
+            "series": "ApiMetaSeries",
+            "action": "metadata",
+            "author": "DUBU (REDICE STUDIO)",
+            "summary": "10 years ago, gates connected the real world with the magic realm.",
+            "links": {
+                "Official": "https://tapas.io/series/solo-leveling"
+            }
+        }
+        headers, body = self._simulate_post("/api/reader-data", payload)
+        self.assertIn("200 OK", headers)
+        resp = json.loads(body.decode("utf-8"))
+        self.assertTrue(resp["success"])
+        self.assertEqual(resp["author"], "DUBU (REDICE STUDIO)")
+        self.assertEqual(resp["summary"], "10 years ago, gates connected the real world with the magic realm.")
+        self.assertEqual(resp["links"]["Official"], "https://tapas.io/series/solo-leveling")
+
+        # GET check
+        headers, body = self._simulate_get("/api/reader-data?series=ApiMetaSeries")
+        get_data = json.loads(body.decode("utf-8"))
+        self.assertEqual(get_data["author"], "DUBU (REDICE STUDIO)")
+        self.assertEqual(get_data["links"]["Official"], "https://tapas.io/series/solo-leveling")
+
+    def test_metadata_missing_fields_defaults(self):
+        """21. Missing metadata fields return clean default values without crashing."""
+        series_dir = self.lib_path / "BlankSeries"
+        series_dir.mkdir(parents=True, exist_ok=True)
+
+        # No .reader folder exists yet
+        headers, body = self._simulate_get("/api/reader-data?series=BlankSeries")
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(data["author"], "")
+        self.assertEqual(data["summary"], "")
+        self.assertEqual(data["links"], {})
+
+        # Partial metadata saved (only author)
+        self.library.update_metadata("BlankSeries", author="Solo Author")
+        headers, body = self._simulate_get("/api/reader-data?series=BlankSeries")
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(data["author"], "Solo Author")
+        self.assertEqual(data["summary"], "")
+        self.assertEqual(data["links"], {})
+
+    def test_metadata_malformed_data_validation(self):
+        """22. Malformed metadata (non-string author/summary, non-dict links) is rejected with 400 Bad Request."""
+        series_dir = self.lib_path / "ValidationSeries"
+        series_dir.mkdir(parents=True, exist_ok=True)
+
+        # Invalid author (number)
+        headers, _ = self._simulate_post("/api/reader-data", {
+            "series": "ValidationSeries",
+            "action": "metadata",
+            "author": 12345
+        })
+        self.assertIn("400", headers)
+
+        # Invalid summary (boolean)
+        headers, _ = self._simulate_post("/api/reader-data", {
+            "series": "ValidationSeries",
+            "action": "metadata",
+            "summary": True
+        })
+        self.assertIn("400", headers)
+
+        # Invalid links (array instead of dictionary)
+        headers, _ = self._simulate_post("/api/reader-data", {
+            "series": "ValidationSeries",
+            "action": "metadata",
+            "links": ["https://anilist.co"]
+        })
+        self.assertIn("400", headers)
+
+        # Missing series name
+        headers, _ = self._simulate_post("/api/reader-data", {
+            "action": "metadata",
+            "author": "Author"
+        })
+        self.assertIn("400", headers)
+
+    def test_metadata_link_validation(self):
+        """23. Link URLs must be valid HTTP/HTTPS URLs and support arbitrary labels."""
+        series_dir = self.lib_path / "LinkValSeries"
+        series_dir.mkdir(parents=True, exist_ok=True)
+
+        # Arbitrary labels with valid http and https URLs
+        valid_links = {
+            "My Favorite Site": "https://example.com/manga",
+            "Wiki (Community)": "http://wiki.example.org/entry",
+            "Custom Platform #1": "https://platform.io/read?id=42"
+        }
+        headers, body = self._simulate_post("/api/reader-data", {
+            "series": "LinkValSeries",
+            "action": "metadata",
+            "links": valid_links
+        })
+        self.assertIn("200 OK", headers)
+        resp = json.loads(body.decode("utf-8"))
+        self.assertEqual(resp["links"], valid_links)
+
+        # Invalid protocol: ftp://
+        headers, _ = self._simulate_post("/api/reader-data", {
+            "series": "LinkValSeries",
+            "action": "metadata",
+            "links": {"FTP Link": "ftp://files.example.com"}
+        })
+        self.assertIn("400", headers)
+
+        # Invalid protocol: javascript:
+        headers, _ = self._simulate_post("/api/reader-data", {
+            "series": "LinkValSeries",
+            "action": "metadata",
+            "links": {"XSS": "javascript:alert(1)"}
+        })
+        self.assertIn("400", headers)
+
+        # Invalid URL: not a URL
+        headers, _ = self._simulate_post("/api/reader-data", {
+            "series": "LinkValSeries",
+            "action": "metadata",
+            "links": {"Malformed": "not_a_valid_url"}
+        })
+        self.assertIn("400", headers)
+
+        # Empty label
+        headers, _ = self._simulate_post("/api/reader-data", {
+            "series": "LinkValSeries",
+            "action": "metadata",
+            "links": {"": "https://valid.com"}
+        })
+        self.assertIn("400", headers)
+
+    def test_metadata_link_add_and_remove(self):
+        """24. Links can be added and subsequently removed."""
+        series_dir = self.lib_path / "LinkLifecycle"
+        series_dir.mkdir(parents=True, exist_ok=True)
+
+        # Add 2 links
+        headers, body = self._simulate_post("/api/reader-data", {
+            "series": "LinkLifecycle",
+            "action": "metadata",
+            "links": {
+                "Link A": "https://a.com",
+                "Link B": "https://b.com"
+            }
+        })
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(len(data["links"]), 2)
+
+        # Remove Link A by saving only Link B
+        headers, body = self._simulate_post("/api/reader-data", {
+            "series": "LinkLifecycle",
+            "action": "metadata",
+            "links": {
+                "Link B": "https://b.com"
+            }
+        })
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(data["links"], {"Link B": "https://b.com"})
+        self.assertNotIn("Link A", data["links"])
+
+        # Remove all links
+        headers, body = self._simulate_post("/api/reader-data", {
+            "series": "LinkLifecycle",
+            "action": "metadata",
+            "links": {}
+        })
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(data["links"], {})
+
+    def test_metadata_ui_static_elements(self):
+        """25. Static HTML, CSS, and JS include metadata display and inline editor elements."""
+        # Check index.html
+        _, html_body = self._simulate_get("/")
+        self.assertIn(b"btn-edit-metadata", html_body)
+        self.assertIn(b"series-metadata-editor", html_body)
+        self.assertIn(b"editor-author", html_body)
+        self.assertIn(b"editor-summary", html_body)
+        self.assertIn(b"btn-add-link", html_body)
+        self.assertIn(b"btn-save-metadata", html_body)
+
+        # Check style.css
+        _, css_body = self._simulate_get("/style.css")
+        self.assertIn(b"series-metadata-editor", css_body)
+        self.assertIn(b"btn-edit-metadata", css_body)
+        self.assertIn(b"series-link-item", css_body)
+
+        # Check app.js
+        _, js_body = self._simulate_get("/app.js")
+        self.assertIn(b"renderSeriesMetadata", js_body)
+        self.assertIn(b"saveSeriesMetadata", js_body)
+        self.assertIn(b"openMetadataEditor", js_body)
+
+    def test_cover_image_replacement_and_normalization(self):
+        """26. Cover image upload replaces/creates cover.jpg and normalizes filename to cover.jpg."""
+        series_dir = self.lib_path / "CoverNormSeries"
+        series_dir.mkdir(parents=True, exist_ok=True)
+
+        # Upload a valid PNG image
+        png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + b"\x00" * 20
+        headers, body = self._simulate_post_binary("/api/cover?series=CoverNormSeries", png_bytes, "image/png")
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        self.assertTrue(data["success"])
+
+        # Check stored filename on disk is strictly cover.jpg
+        cover_file = series_dir / "cover.jpg"
+        self.assertTrue(cover_file.is_file())
+        self.assertEqual(cover_file.read_bytes(), png_bytes)
+
+        # Check GET /api/cover serves it with correct image/png Content-Type
+        get_headers, get_body = self._simulate_get("/api/cover?series=CoverNormSeries")
+        self.assertIn("200 OK", get_headers)
+        self.assertIn("Content-Type: image/png", get_headers)
+        self.assertEqual(get_body, png_bytes)
+
+        # Upload a valid JPEG image via JSON base64
+        import base64
+        jpeg_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00" + b"\x00" * 20
+        b64_str = base64.b64encode(jpeg_bytes).decode("ascii")
+        headers, body = self._simulate_post("/api/cover", {
+            "series": "CoverNormSeries",
+            "image": b64_str
+        })
+        self.assertIn("200 OK", headers)
+        self.assertEqual(cover_file.read_bytes(), jpeg_bytes)
+
+        # Verify GET /api/cover now serves JPEG
+        get_headers, get_body = self._simulate_get("/api/cover?series=CoverNormSeries")
+        self.assertIn("200 OK", get_headers)
+        self.assertIn("Content-Type: image/jpeg", get_headers)
+        self.assertEqual(get_body, jpeg_bytes)
+
+    def test_background_image_replacement_and_normalization(self):
+        """27. Background image upload replaces/creates background.jpg and normalizes filename."""
+        series_dir = self.lib_path / "BgNormSeries"
+        series_dir.mkdir(parents=True, exist_ok=True)
+
+        # Upload a valid WebP image
+        webp_bytes = b"RIFF\x20\x00\x00\x00WEBPVP8 " + b"\x00" * 20
+        headers, body = self._simulate_post_binary("/api/background?series=BgNormSeries", webp_bytes, "image/webp")
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        self.assertTrue(data["success"])
+
+        # Check stored filename on disk is strictly background.jpg
+        bg_file = series_dir / "background.jpg"
+        self.assertTrue(bg_file.is_file())
+        self.assertEqual(bg_file.read_bytes(), webp_bytes)
+
+        # Check GET /api/background serves it with image/webp Content-Type
+        get_headers, get_body = self._simulate_get("/api/background?series=BgNormSeries")
+        self.assertIn("200 OK", get_headers)
+        self.assertIn("Content-Type: image/webp", get_headers)
+        self.assertEqual(get_body, webp_bytes)
+
+    def test_background_image_removal_and_fallback(self):
+        """28. Background removal removes background.jpg and falls back to cover."""
+        series_dir = self.lib_path / "BgRemoveSeries"
+        series_dir.mkdir(parents=True, exist_ok=True)
+
+        cover_bytes = b"\xff\xd8\xff\xe0" + b"COVER_DATA" * 5
+        bg_bytes = b"\xff\xd8\xff\xe0" + b"BG_DATA" * 5
+
+        (series_dir / "cover.jpg").write_bytes(cover_bytes)
+        (series_dir / "background.jpg").write_bytes(bg_bytes)
+
+        # Check background initially serves bg_bytes
+        get_headers, get_body = self._simulate_get("/api/background?series=BgRemoveSeries")
+        self.assertEqual(get_body, bg_bytes)
+
+        # Check reader-data reports has_background: True
+        r_headers, r_body = self._simulate_get("/api/reader-data?series=BgRemoveSeries")
+        r_data = json.loads(r_body.decode("utf-8"))
+        self.assertTrue(r_data["has_background"])
+        self.assertTrue(r_data["has_cover"])
+
+        # Remove background via action=remove
+        post_headers, post_body = self._simulate_post("/api/background?series=BgRemoveSeries&action=remove", {})
+        self.assertIn("200 OK", post_headers)
+
+        # Verify background.jpg is deleted
+        self.assertFalse((series_dir / "background.jpg").exists())
+
+        # Verify background GET now falls back to cover.jpg
+        get_headers, get_body = self._simulate_get("/api/background?series=BgRemoveSeries")
+        self.assertIn("200 OK", get_headers)
+        self.assertEqual(get_body, cover_bytes)
+
+        # Check reader-data now reports has_background: False
+        r_headers, r_body = self._simulate_get("/api/reader-data?series=BgRemoveSeries")
+        r_data = json.loads(r_body.decode("utf-8"))
+        self.assertFalse(r_data["has_background"])
+
+        # Put background back, then test removal via DELETE method
+        (series_dir / "background.jpg").write_bytes(bg_bytes)
+        self.assertTrue((series_dir / "background.jpg").exists())
+        del_headers, del_body = self._simulate_delete("/api/background?series=BgRemoveSeries")
+        self.assertIn("200 OK", del_headers)
+        self.assertFalse((series_dir / "background.jpg").exists())
+
+    def test_invalid_image_upload_rejected(self):
+        """29. Invalid or non-image files are rejected with 400 Bad Request."""
+        series_dir = self.lib_path / "InvalidUploadSeries"
+        series_dir.mkdir(parents=True, exist_ok=True)
+
+        # Plain text
+        headers, _ = self._simulate_post_binary("/api/cover?series=InvalidUploadSeries", b"Plain text not an image", "text/plain")
+        self.assertIn("400", headers)
+
+        # Random bytes
+        headers, _ = self._simulate_post_binary("/api/background?series=InvalidUploadSeries", b"\x00\x01\x02\x03\x04\x05\x06\x07", "application/octet-stream")
+        self.assertIn("400", headers)
+
+        # Empty body
+        headers, _ = self._simulate_post_binary("/api/cover?series=InvalidUploadSeries", b"", "image/jpeg")
+        self.assertIn("400", headers)
+
+    def test_path_safety_and_directory_traversal(self):
+        """30. Path traversal attacks on image endpoints are safely rejected."""
+        valid_jpeg = b"\xff\xd8\xff\xe0" + b"\x00" * 20
+
+        # Traversal on POST /api/cover
+        headers, _ = self._simulate_post_binary("/api/cover?series=../../etc", valid_jpeg)
+        self.assertIn("400", headers)
+
+        # Traversal on POST /api/background
+        headers, _ = self._simulate_post_binary("/api/background?series=../../etc", valid_jpeg)
+        self.assertIn("400", headers)
+
+        # Traversal on DELETE /api/background
+        headers, _ = self._simulate_delete("/api/background?series=../../etc")
+        self.assertIn("400", headers)
+
+        # Missing series parameter
+        headers, _ = self._simulate_post_binary("/api/cover", valid_jpeg)
+        self.assertIn("400", headers)
+
+        headers, _ = self._simulate_post_binary("/api/background", valid_jpeg)
+        self.assertIn("400", headers)
+
+        headers, _ = self._simulate_delete("/api/background")
+        self.assertIn("400", headers)
+
+    def test_image_cache_control_headers(self):
+        """31. Cover and background responses provide strong anti-cache headers for Safari."""
+        series_dir = self.lib_path / "CacheHeaderSeries"
+        series_dir.mkdir(parents=True, exist_ok=True)
+        (series_dir / "cover.jpg").write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 20)
+        (series_dir / "background.jpg").write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 20)
+
+        headers, _ = self._simulate_get("/api/cover?series=CacheHeaderSeries")
+        self.assertIn("200 OK", headers)
+        self.assertIn("Cache-Control: no-cache, no-store, must-revalidate", headers)
+        self.assertIn("Pragma: no-cache", headers)
+        self.assertIn("Expires: 0", headers)
+
+        headers, _ = self._simulate_get("/api/background?series=CacheHeaderSeries")
+        self.assertIn("200 OK", headers)
+        self.assertIn("Cache-Control: no-cache, no-store, must-revalidate", headers)
+        self.assertIn("Pragma: no-cache", headers)
+        self.assertIn("Expires: 0", headers)
+
+    def test_reader_data_reports_has_cover_and_has_background(self):
+        """32. /api/reader-data correctly reports has_cover and has_background flags."""
+        series_dir = self.lib_path / "FlagSeries"
+        series_dir.mkdir(parents=True, exist_ok=True)
+
+        # Neither exists
+        headers, body = self._simulate_get("/api/reader-data?series=FlagSeries")
+        data = json.loads(body.decode("utf-8"))
+        self.assertFalse(data["has_cover"])
+        self.assertFalse(data["has_background"])
+
+        # Add cover only
+        (series_dir / "cover.jpg").write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 20)
+        headers, body = self._simulate_get("/api/reader-data?series=FlagSeries")
+        data = json.loads(body.decode("utf-8"))
+        self.assertTrue(data["has_cover"])
+        self.assertFalse(data["has_background"])
+
+        # Add background
+        (series_dir / "background.jpg").write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 20)
+        headers, body = self._simulate_get("/api/reader-data?series=FlagSeries")
+        data = json.loads(body.decode("utf-8"))
+        self.assertTrue(data["has_cover"])
+        self.assertTrue(data["has_background"])
+
+    def test_image_management_ui_static_elements(self):
+        """33. Static HTML, CSS, and JS include cover and background image management elements."""
+        # Check index.html
+        _, html_body = self._simulate_get("/")
+        self.assertIn(b"editor-cover-file", html_body)
+        self.assertIn(b"editor-bg-file", html_body)
+        self.assertIn(b"btn-remove-bg", html_body)
+        self.assertIn(b"editor-cover-preview", html_body)
+        self.assertIn(b"editor-bg-preview", html_body)
+
+        # Check style.css
+        _, css_body = self._simulate_get("/style.css")
+        self.assertIn(b"editor-image-section", css_body)
+        self.assertIn(b"cover-preview-wrapper", css_body)
+        self.assertIn(b"bg-preview-wrapper", css_body)
+        self.assertIn(b"btn-file-select", css_body)
+        self.assertIn(b"btn-remove-image", css_body)
+
+        # Check app.js
+        _, js_body = self._simulate_get("/app.js")
+        self.assertIn(b"uploadSeriesImage", js_body)
+        self.assertIn(b"removeSeriesBackground", js_body)
+        self.assertIn(b"editorCoverFile", js_body)
+        self.assertIn(b"editorBgFile", js_body)
+        self.assertIn(b"btnRemoveBg", js_body)
+
+    def test_external_links_under_cover_and_vertical_styling(self):
+        """34. External links are placed in the cover column beneath the cover thumbnail with vertical layout."""
+        _, html_body = self._simulate_get("/")
+        html_str = html_body.decode("utf-8")
+
+        # Verify series-cover-column exists and contains both cover thumb wrapper and links panel
+        self.assertIn('class="series-cover-column"', html_str)
+        cover_col_start = html_str.find('class="series-cover-column"')
+        info_panel_start = html_str.find('class="series-info-panel"')
+        self.assertLess(cover_col_start, info_panel_start)
+
+        # Verify series-links-panel is within cover column and before info panel
+        links_panel_pos = html_str.find('id="series-links-panel"')
+        self.assertGreater(links_panel_pos, cover_col_start)
+        self.assertLess(links_panel_pos, info_panel_start)
+
+        # Check style.css has column display for links
+        _, css_body = self._simulate_get("/style.css")
+        css_str = css_body.decode("utf-8")
+        self.assertIn(".series-cover-column", css_str)
+        self.assertIn("flex-direction: column", css_str)
+
+
 
 if __name__ == "__main__":
     unittest.main()
+

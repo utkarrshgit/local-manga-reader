@@ -17,7 +17,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const librarySort = document.getElementById("library-sort");
   const libraryNoResults = document.getElementById("library-no-results");
 
-  // DOM Elements - Chapters
+  // DOM Elements - Chapters & Metadata
   const chaptersList = document.getElementById("chapters-list");
   const chaptersEmpty = document.getElementById("chapters-empty");
   const seriesTitle = document.getElementById("series-title");
@@ -25,7 +25,42 @@ document.addEventListener("DOMContentLoaded", () => {
   const seriesCoverThumbWrapper = document.getElementById("series-cover-thumb-wrapper");
   const seriesCoverThumb = document.getElementById("series-cover-thumb");
   const seriesHeroBackdrop = document.getElementById("series-hero-backdrop");
+  const seriesMetadataDisplay = document.getElementById("series-metadata-display");
+  const seriesAuthor = document.getElementById("series-author");
+  const seriesAuthorName = document.getElementById("series-author-name");
+  const seriesSummaryPanel = document.getElementById("series-summary-panel");
   const seriesSummary = document.getElementById("series-summary");
+  const seriesLinksPanel = document.getElementById("series-links-panel");
+  const seriesLinksList = document.getElementById("series-links-list");
+  const btnEditMetadata = document.getElementById("btn-edit-metadata");
+
+  // DOM Elements - Metadata Editor
+  const seriesMetadataEditor = document.getElementById("series-metadata-editor");
+  const editorCoverPreviewWrapper = document.getElementById("editor-cover-preview-wrapper");
+  const editorCoverPreview = document.getElementById("editor-cover-preview");
+  const editorCoverPlaceholder = document.getElementById("editor-cover-placeholder");
+  const editorCoverFile = document.getElementById("editor-cover-file");
+  const editorCoverFileName = document.getElementById("editor-cover-file-name");
+
+  const editorBgPreviewWrapper = document.getElementById("editor-bg-preview-wrapper");
+  const editorBgPreview = document.getElementById("editor-bg-preview");
+  const editorBgPlaceholder = document.getElementById("editor-bg-placeholder");
+  const editorBgFile = document.getElementById("editor-bg-file");
+  const editorBgFileName = document.getElementById("editor-bg-file-name");
+  const btnRemoveBg = document.getElementById("btn-remove-bg");
+
+  const editorAuthor = document.getElementById("editor-author");
+  const editorSummary = document.getElementById("editor-summary");
+  const btnAddLink = document.getElementById("btn-add-link");
+  const editorLinksList = document.getElementById("editor-links-list");
+  const btnCancelMetadata = document.getElementById("btn-cancel-metadata");
+  const btnSaveMetadata = document.getElementById("btn-save-metadata");
+  const editorError = document.getElementById("editor-error");
+
+  let currentSeriesReaderData = null;
+  let selectedCoverFile = null;
+  let selectedBgFile = null;
+  let removeBackgroundFlag = false;
 
   // DOM Elements - Reader
   const readerSeriesName = document.getElementById("reader-series-name");
@@ -351,7 +386,18 @@ document.addEventListener("DOMContentLoaded", () => {
         seriesHeroBackdrop.style.visibility = "";
       }
       if (seriesSummary) {
-        seriesSummary.textContent = "No summary";
+        seriesSummary.textContent = "";
+      }
+      if (seriesMetadataDisplay && seriesMetadataEditor) {
+        seriesMetadataEditor.classList.add("hidden");
+        seriesMetadataDisplay.classList.remove("hidden");
+      }
+      if (seriesLinksPanel) {
+        seriesLinksPanel.classList.add("hidden");
+      }
+      if (editorError) {
+        editorError.textContent = "";
+        editorError.classList.add("hidden");
       }
       if (appHeader) {
         appHeader.style.removeProperty("background-color");
@@ -461,15 +507,76 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
 
-  // API Helper: Fetch Reader Data (Bookmarks & Progress)
+  // API Helper: Fetch Reader Data (Bookmarks, Progress & Metadata)
   async function fetchReaderData(seriesName) {
     try {
       const res = await fetch(`/api/reader-data?series=${encodeURIComponent(seriesName)}`);
-      if (!res.ok) return { progress: {}, bookmarks: [] };
+      if (!res.ok) return { progress: {}, bookmarks: [], summary: "", author: "", links: {} };
       return await res.json();
     } catch {
-      return { progress: {}, bookmarks: [] };
+      return { progress: {}, bookmarks: [], summary: "", author: "", links: {} };
     }
+  }
+
+  // API Helper: Save Series Metadata (Author, Summary, Links)
+  async function saveSeriesMetadata(seriesName, metadata) {
+    const res = await fetch("/api/reader-data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        series: seriesName,
+        action: "metadata",
+        author: metadata.author,
+        summary: metadata.summary,
+        links: metadata.links
+      })
+    });
+    if (!res.ok) {
+      let errMsg = `HTTP error ${res.status}`;
+      try {
+        const errJson = await res.json();
+        if (errJson && errJson.error) errMsg = errJson.error;
+      } catch {}
+      throw new Error(errMsg);
+    }
+    return await res.json();
+  }
+
+  // API Helper: Upload Series Image (Cover or Background)
+  async function uploadSeriesImage(seriesName, file, type = "cover") {
+    const endpoint = type === "cover" ? "/api/cover" : "/api/background";
+    const res = await fetch(`${endpoint}?series=${encodeURIComponent(seriesName)}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": file.type || "application/octet-stream"
+      },
+      body: file
+    });
+    if (!res.ok) {
+      let errMsg = `Failed to upload ${type} image (${res.status})`;
+      try {
+        const errJson = await res.json();
+        if (errJson && errJson.error) errMsg = errJson.error;
+      } catch {}
+      throw new Error(errMsg);
+    }
+    return await res.json();
+  }
+
+  // API Helper: Remove Series Background Image
+  async function removeSeriesBackground(seriesName) {
+    const res = await fetch(`/api/background?series=${encodeURIComponent(seriesName)}&action=remove`, {
+      method: "POST"
+    });
+    if (!res.ok) {
+      let errMsg = `Failed to remove background image (${res.status})`;
+      try {
+        const errJson = await res.json();
+        if (errJson && errJson.error) errMsg = errJson.error;
+      } catch {}
+      throw new Error(errMsg);
+    }
+    return await res.json();
   }
 
   // API Helper: Toggle Bookmark
@@ -775,15 +882,326 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // Series Metadata Rendering & Editing
+  function renderSeriesMetadata(readerData) {
+    currentSeriesReaderData = readerData || {};
+
+    // 1. Author
+    if (seriesAuthor && seriesAuthorName) {
+      const authorText = (currentSeriesReaderData.author || "").trim();
+      if (authorText) {
+        seriesAuthorName.textContent = authorText;
+        seriesAuthor.classList.remove("hidden");
+      } else {
+        seriesAuthor.classList.add("hidden");
+        seriesAuthorName.textContent = "";
+      }
+    }
+
+    // 2. Summary
+    if (seriesSummaryPanel && seriesSummary) {
+      const summaryText = (currentSeriesReaderData.summary || "").trim();
+      if (summaryText) {
+        seriesSummary.textContent = summaryText;
+        seriesSummaryPanel.classList.remove("hidden");
+      } else {
+        seriesSummaryPanel.classList.add("hidden");
+        seriesSummary.textContent = "";
+      }
+    }
+
+    // 3. Links
+    if (seriesLinksPanel && seriesLinksList) {
+      const links = currentSeriesReaderData.links;
+      seriesLinksList.innerHTML = "";
+      if (links && typeof links === "object" && Object.keys(links).length > 0) {
+        Object.entries(links).forEach(([label, url]) => {
+          const a = document.createElement("a");
+          a.className = "series-link-item";
+          a.href = url;
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          a.title = `Open ${label}`;
+          a.innerHTML = `
+            <span>${escapeHtml(label)}</span>
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="link-external-icon">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/>
+            </svg>
+          `;
+          seriesLinksList.appendChild(a);
+        });
+        seriesLinksPanel.classList.remove("hidden");
+      } else {
+        seriesLinksPanel.classList.add("hidden");
+      }
+    }
+
+    // Ensure display is active and editor is closed
+    if (seriesMetadataDisplay && seriesMetadataEditor) {
+      seriesMetadataDisplay.classList.remove("hidden");
+      seriesMetadataEditor.classList.add("hidden");
+    }
+    if (editorError) {
+      editorError.textContent = "";
+      editorError.classList.add("hidden");
+    }
+  }
+
+  function openMetadataEditor() {
+    if (!seriesMetadataEditor || !seriesMetadataDisplay) return;
+
+    // Reset image selections
+    selectedCoverFile = null;
+    selectedBgFile = null;
+    removeBackgroundFlag = false;
+    if (editorCoverFile) editorCoverFile.value = "";
+    if (editorBgFile) editorBgFile.value = "";
+    if (editorCoverFileName) editorCoverFileName.textContent = "Choose image...";
+    if (editorBgFileName) editorBgFileName.textContent = "Choose image...";
+
+    const cacheBust = Date.now();
+    // Load current cover preview
+    if (editorCoverPreview) {
+      editorCoverPreview.onload = () => {
+        editorCoverPreview.classList.remove("hidden");
+        if (editorCoverPlaceholder) editorCoverPlaceholder.classList.add("hidden");
+      };
+      editorCoverPreview.onerror = () => {
+        editorCoverPreview.classList.add("hidden");
+        if (editorCoverPlaceholder) {
+          editorCoverPlaceholder.textContent = "No cover";
+          editorCoverPlaceholder.classList.remove("hidden");
+        }
+      };
+      editorCoverPreview.src = `/api/cover?series=${encodeURIComponent(currentSeries)}&t=${cacheBust}`;
+    }
+
+    // Load current background preview
+    if (editorBgPreview) {
+      if (currentSeriesReaderData && currentSeriesReaderData.has_background) {
+        editorBgPreview.onload = () => {
+          editorBgPreview.classList.remove("hidden");
+          if (editorBgPlaceholder) editorBgPlaceholder.classList.add("hidden");
+        };
+        editorBgPreview.onerror = () => {
+          editorBgPreview.classList.add("hidden");
+          if (editorBgPlaceholder) {
+            editorBgPlaceholder.textContent = "No custom background";
+            editorBgPlaceholder.classList.remove("hidden");
+          }
+        };
+        editorBgPreview.src = `/api/background?series=${encodeURIComponent(currentSeries)}&t=${cacheBust}`;
+        if (btnRemoveBg) btnRemoveBg.classList.remove("hidden");
+      } else {
+        editorBgPreview.src = "";
+        editorBgPreview.classList.add("hidden");
+        if (editorBgPlaceholder) {
+          editorBgPlaceholder.textContent = "No custom background";
+          editorBgPlaceholder.classList.remove("hidden");
+        }
+        if (btnRemoveBg) btnRemoveBg.classList.add("hidden");
+      }
+    }
+
+    const data = currentSeriesReaderData || {};
+    if (editorAuthor) editorAuthor.value = data.author || "";
+    if (editorSummary) editorSummary.value = data.summary || "";
+
+    if (editorLinksList) {
+      editorLinksList.innerHTML = "";
+      const links = data.links || {};
+      const entries = Object.entries(links);
+      if (entries.length > 0) {
+        entries.forEach(([label, url]) => {
+          addEditorLinkRow(label, url);
+        });
+      }
+    }
+
+    if (editorError) {
+      editorError.textContent = "";
+      editorError.classList.add("hidden");
+    }
+
+    seriesMetadataDisplay.classList.add("hidden");
+    seriesMetadataEditor.classList.remove("hidden");
+    if (seriesLinksPanel) {
+      seriesLinksPanel.classList.add("hidden");
+    }
+    if (editorAuthor) editorAuthor.focus();
+  }
+
+  function closeMetadataEditor() {
+    if (!seriesMetadataEditor || !seriesMetadataDisplay) return;
+    selectedCoverFile = null;
+    selectedBgFile = null;
+    removeBackgroundFlag = false;
+    if (editorCoverFile) editorCoverFile.value = "";
+    if (editorBgFile) editorBgFile.value = "";
+    seriesMetadataEditor.classList.add("hidden");
+    seriesMetadataDisplay.classList.remove("hidden");
+    if (seriesLinksPanel && currentSeriesReaderData && currentSeriesReaderData.links && Object.keys(currentSeriesReaderData.links).length > 0) {
+      seriesLinksPanel.classList.remove("hidden");
+    }
+    if (editorError) {
+      editorError.textContent = "";
+      editorError.classList.add("hidden");
+    }
+  }
+
+  function addEditorLinkRow(label = "", url = "") {
+    if (!editorLinksList) return null;
+    const row = document.createElement("div");
+    row.className = "editor-link-row";
+    row.innerHTML = `
+      <input type="text" class="editor-input editor-link-label" placeholder="Label (e.g. AniList)" value="${escapeHtml(label)}" autocomplete="off" spellcheck="false" />
+      <input type="url" class="editor-input editor-link-url" placeholder="https://..." value="${escapeHtml(url)}" autocomplete="off" spellcheck="false" />
+      <button type="button" class="btn-remove-link" title="Remove link" aria-label="Remove link">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 6 6 18M6 6l12 12"/>
+        </svg>
+      </button>
+    `;
+
+    const btnRemove = row.querySelector(".btn-remove-link");
+    btnRemove.addEventListener("click", () => {
+      row.remove();
+    });
+
+    editorLinksList.appendChild(row);
+    return row;
+  }
+
+  async function handleSaveMetadata() {
+    if (!currentSeries) return;
+
+    if (editorError) {
+      editorError.textContent = "";
+      editorError.classList.add("hidden");
+    }
+
+    const authorVal = editorAuthor ? editorAuthor.value.trim() : "";
+    const summaryVal = editorSummary ? editorSummary.value.trim() : "";
+
+    // Parse and validate links
+    const linksObj = {};
+    if (editorLinksList) {
+      const rows = editorLinksList.querySelectorAll(".editor-link-row");
+      for (const row of rows) {
+        const labelInput = row.querySelector(".editor-link-label");
+        const urlInput = row.querySelector(".editor-link-url");
+        const label = labelInput ? labelInput.value.trim() : "";
+        const url = urlInput ? urlInput.value.trim() : "";
+
+        // If both empty, ignore row
+        if (!label && !url) continue;
+
+        if (!label) {
+          showEditorError("Please enter a label for each link or remove the empty row.");
+          if (labelInput) labelInput.focus();
+          return;
+        }
+
+        if (!url) {
+          showEditorError(`Please enter a URL for "${label}".`);
+          if (urlInput) urlInput.focus();
+          return;
+        }
+
+        // Validate URL format
+        try {
+          const parsed = new URL(url);
+          if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+            showEditorError(`Invalid URL for "${label}". Must start with http:// or https://`);
+            if (urlInput) urlInput.focus();
+            return;
+          }
+        } catch {
+          showEditorError(`Invalid URL format for "${label}". Must be a valid HTTP or HTTPS URL.`);
+          if (urlInput) urlInput.focus();
+          return;
+        }
+
+        linksObj[label] = url;
+      }
+    }
+
+    if (btnSaveMetadata) {
+      btnSaveMetadata.disabled = true;
+      btnSaveMetadata.textContent = "Saving...";
+    }
+
+    try {
+      // 1. Upload Cover Image if selected
+      if (selectedCoverFile) {
+        await uploadSeriesImage(currentSeries, selectedCoverFile, "cover");
+      }
+
+      // 2. Remove or Upload Background Image if requested
+      if (removeBackgroundFlag) {
+        await removeSeriesBackground(currentSeries);
+      } else if (selectedBgFile) {
+        await uploadSeriesImage(currentSeries, selectedBgFile, "background");
+      }
+
+      // 3. Save text metadata (Author, Summary, Links)
+      await saveSeriesMetadata(currentSeries, {
+        author: authorVal,
+        summary: summaryVal,
+        links: linksObj
+      });
+
+      // 4. Update UI previews with cache-busting timestamp
+      const t = Date.now();
+
+      // Update series cover thumbnail on detail page
+      if (seriesCoverThumb && seriesCoverThumbWrapper) {
+        seriesCoverThumb.src = `/api/cover?series=${encodeURIComponent(currentSeries)}&t=${t}`;
+        seriesCoverThumb.classList.remove("hidden");
+        seriesCoverThumbWrapper.classList.remove("hidden");
+      }
+
+      // Update hero backdrop on detail page
+      if (seriesHeroBackdrop) {
+        const bgUrl = `/api/background?series=${encodeURIComponent(currentSeries)}&t=${t}`;
+        seriesHeroBackdrop.style.backgroundImage = `url("${bgUrl}")`;
+        seriesHeroBackdrop.classList.add("loaded");
+      }
+
+      // Update cached library item
+      const cached = allSeriesList.find((s) => s.name === currentSeries);
+      if (cached) {
+        cached.has_cover = true;
+        cached.cover_url = `/api/cover?series=${encodeURIComponent(currentSeries)}&t=${t}`;
+      }
+
+      // 5. Fetch fresh reader data (which contains updated has_cover and has_background)
+      const freshReaderData = await fetchReaderData(currentSeries);
+      renderSeriesMetadata(freshReaderData);
+      closeMetadataEditor();
+    } catch (err) {
+      showEditorError(err.message || "Failed to save metadata");
+    } finally {
+      if (btnSaveMetadata) {
+        btnSaveMetadata.disabled = false;
+        btnSaveMetadata.textContent = "Save";
+      }
+    }
+  }
+
+  function showEditorError(msg) {
+    if (editorError) {
+      editorError.textContent = msg;
+      editorError.classList.remove("hidden");
+    }
+  }
+
   // 2. Load Chapters View (shows Bookmarks and Reading Progress)
   async function loadChapters(seriesName) {
     currentSeries = seriesName;
     switchView("chapters");
     seriesTitle.textContent = seriesName;
     seriesMeta.textContent = "Loading chapters...";
-    if (seriesSummary) {
-      seriesSummary.textContent = "No summary";
-    }
     chaptersList.innerHTML = "";
     chaptersEmpty.classList.add("hidden");
 
@@ -793,7 +1211,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (seriesHeroBackdrop) {
-      const bgUrl = `/api/background?series=${encodeURIComponent(seriesName)}`;
+      const bgUrl = `/api/background?series=${encodeURIComponent(seriesName)}&t=${Date.now()}`;
       seriesHeroBackdrop.style.backgroundImage = `url("${bgUrl}")`;
       seriesHeroBackdrop.classList.add("loaded");
 
@@ -814,7 +1232,7 @@ document.addEventListener("DOMContentLoaded", () => {
         seriesCoverThumb.classList.add("hidden");
         seriesCoverThumbWrapper.classList.add("hidden");
       };
-      seriesCoverThumb.src = `/api/cover?series=${encodeURIComponent(seriesName)}`;
+      seriesCoverThumb.src = `/api/cover?series=${encodeURIComponent(seriesName)}&t=${Date.now()}`;
     }
 
     try {
@@ -826,15 +1244,11 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!chaptersRes.ok) throw new Error(`HTTP error ${chaptersRes.status}`);
       const data = await chaptersRes.json();
 
+      currentSeries = seriesName;
       currentSeriesBookmarks = new Set(readerData.bookmarks || []);
       currentSeriesProgress = readerData.progress || {};
 
-      if (seriesSummary) {
-        const summaryText = (readerData && readerData.summary && readerData.summary.trim())
-          ? readerData.summary.trim()
-          : "No summary";
-        seriesSummary.textContent = summaryText;
-      }
+      renderSeriesMetadata(readerData);
 
       const chapters = data.chapters || [];
       chaptersList.innerHTML = "";
@@ -1331,6 +1745,95 @@ document.addEventListener("DOMContentLoaded", () => {
       e.preventDefault();
       btnReaderBookmark.click();
     }
+  });
+
+  // Metadata Editor Event Listeners
+  if (btnEditMetadata) {
+    btnEditMetadata.addEventListener("click", openMetadataEditor);
+  }
+  if (btnCancelMetadata) {
+    btnCancelMetadata.addEventListener("click", closeMetadataEditor);
+  }
+  if (btnAddLink) {
+    btnAddLink.addEventListener("click", () => {
+      const row = addEditorLinkRow();
+      if (row) {
+        const labelInput = row.querySelector(".editor-link-label");
+        if (labelInput) labelInput.focus();
+      }
+    });
+  }
+  if (btnSaveMetadata) {
+    btnSaveMetadata.addEventListener("click", handleSaveMetadata);
+  }
+
+  // Cover image file selection
+  if (editorCoverFile) {
+    editorCoverFile.addEventListener("change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (file) {
+        selectedCoverFile = file;
+        if (editorCoverFileName) editorCoverFileName.textContent = file.name;
+        const objUrl = URL.createObjectURL(file);
+        if (editorCoverPreview) {
+          editorCoverPreview.src = objUrl;
+          editorCoverPreview.classList.remove("hidden");
+        }
+        if (editorCoverPlaceholder) editorCoverPlaceholder.classList.add("hidden");
+      }
+    });
+  }
+
+  // Background image file selection
+  if (editorBgFile) {
+    editorBgFile.addEventListener("change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (file) {
+        selectedBgFile = file;
+        removeBackgroundFlag = false;
+        if (editorBgFileName) editorBgFileName.textContent = file.name;
+        const objUrl = URL.createObjectURL(file);
+        if (editorBgPreview) {
+          editorBgPreview.src = objUrl;
+          editorBgPreview.classList.remove("hidden");
+        }
+        if (editorBgPlaceholder) editorBgPlaceholder.classList.add("hidden");
+        if (btnRemoveBg) btnRemoveBg.classList.remove("hidden");
+      }
+    });
+  }
+
+  // Background remove button
+  if (btnRemoveBg) {
+    btnRemoveBg.addEventListener("click", () => {
+      removeBackgroundFlag = true;
+      selectedBgFile = null;
+      if (editorBgFile) editorBgFile.value = "";
+      if (editorBgFileName) editorBgFileName.textContent = "Choose image...";
+      if (editorBgPreview) {
+        editorBgPreview.src = "";
+        editorBgPreview.classList.add("hidden");
+      }
+      if (editorBgPlaceholder) {
+        editorBgPlaceholder.textContent = "Will revert to cover on save";
+        editorBgPlaceholder.classList.remove("hidden");
+      }
+      btnRemoveBg.classList.add("hidden");
+    });
+  }
+
+  // Keyboard accessibility for file select labels
+  document.querySelectorAll(".btn-file-select").forEach((lbl) => {
+    lbl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        const forId = lbl.getAttribute("for");
+        if (forId) {
+          const inp = document.getElementById(forId);
+          if (inp) inp.click();
+        }
+      }
+    });
   });
 
   // Initial load

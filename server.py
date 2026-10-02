@@ -29,6 +29,65 @@ def natural_sort_key(text: str):
     return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", text)]
 
 
+def is_valid_http_url(url: str) -> bool:
+    """Validates that a URL is a valid HTTP or HTTPS URL."""
+    if not isinstance(url, str):
+        return False
+    trimmed = url.strip()
+    if not trimmed:
+        return False
+    try:
+        parsed = urlparse(trimmed)
+        return parsed.scheme.lower() in ("http", "https") and bool(parsed.netloc)
+    except Exception:
+        return False
+
+
+SUPPORTED_IMAGE_TYPES = {
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+    "gif": "image/gif",
+    "avif": "image/avif",
+    "bmp": "image/bmp",
+}
+
+
+def detect_image_format(data: bytes) -> str | None:
+    """
+    Detects supported image format from magic bytes.
+    Returns format identifier ('jpeg', 'png', 'webp', 'gif', 'avif', 'bmp') or None if unsupported/invalid.
+    """
+    if not isinstance(data, (bytes, bytearray)) or len(data) < 12:
+        return None
+
+    # JPEG: starts with \xff\xd8\xff
+    if data.startswith(b"\xff\xd8\xff"):
+        return "jpeg"
+
+    # PNG: starts with \x89PNG\r\n\x1a\n
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+
+    # WebP: starts with RIFF and bytes 8..12 are WEBP
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "webp"
+
+    # GIF: starts with GIF87a or GIF89a
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        return "gif"
+
+    # AVIF: bytes 4..8 are ftyp and bytes 8..12 are avif or avis
+    if data[4:8] == b"ftyp" and data[8:12] in (b"avif", b"avis"):
+        return "avif"
+
+    # BMP: starts with BM and minimum header length
+    if data.startswith(b"BM") and len(data) >= 14:
+        return "bmp"
+
+    return None
+
+
 class MangaLibrary:
     """Manages filesystem scanning and resolution of manga series, chapters, and images."""
 
@@ -137,10 +196,13 @@ class MangaLibrary:
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
             return None
 
-        # Priority 1: <series_dir>/cover.jpg
+        # Priority 1: <series_dir>/cover.jpg (or .jpeg)
         candidate = series_dir / "cover.jpg"
         if candidate.is_file():
             return candidate
+        candidate_jpeg = series_dir / "cover.jpeg"
+        if candidate_jpeg.is_file():
+            return candidate_jpeg
 
         # Priority 2: First image of the first naturally sorted chapter
         chapters = self.list_chapters(series_name)
@@ -158,7 +220,7 @@ class MangaLibrary:
         """
         Resolves the atmospheric background image path for a series hero.
         Priority:
-        1. <series_dir>/background.jpg
+        1. <series_dir>/background.jpg (or .jpeg)
         2. Fallback to <series_dir>/cover.jpg
         Returns None if neither exists.
         """
@@ -166,17 +228,114 @@ class MangaLibrary:
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
             return None
 
-        # Priority 1: <series_dir>/background.jpg
+        # Priority 1: <series_dir>/background.jpg (or .jpeg)
         bg_candidate = series_dir / "background.jpg"
         if bg_candidate.is_file():
             return bg_candidate
+        bg_candidate_jpeg = series_dir / "background.jpeg"
+        if bg_candidate_jpeg.is_file():
+            return bg_candidate_jpeg
 
         # Priority 2: Fallback to <series_dir>/cover.jpg
-        cover_candidate = series_dir / "cover.jpg"
-        if cover_candidate.is_file():
+        cover_candidate = self.get_cover_path(series_name)
+        if cover_candidate and cover_candidate.is_file():
             return cover_candidate
 
         return None
+
+    def has_background_file(self, series_name: str) -> bool:
+        """Checks if a dedicated background.jpg (or .jpeg) exists for a series."""
+        series_dir = self.root_path / series_name
+        if not self._is_safe_child(series_dir) or not series_dir.is_dir():
+            return False
+        return (series_dir / "background.jpg").is_file() or (series_dir / "background.jpeg").is_file()
+
+    def save_cover_image(self, series_name: str, image_bytes: bytes) -> bool:
+        """
+        Saves uploaded image bytes as <series_dir>/cover.jpg.
+        Validates safety, format, and writes atomically.
+        """
+        series_dir = self.root_path / series_name
+        if not self._is_safe_child(series_dir) or not series_dir.is_dir():
+            return False
+
+        if not detect_image_format(image_bytes):
+            return False
+
+        target_file = series_dir / "cover.jpg"
+        if not self._is_safe_child(target_file):
+            return False
+
+        temp_file = series_dir / "cover.jpg.tmp"
+        try:
+            temp_file.write_bytes(image_bytes)
+            temp_file.replace(target_file)
+            jpeg_alt = series_dir / "cover.jpeg"
+            if jpeg_alt.is_file():
+                try:
+                    jpeg_alt.unlink()
+                except OSError:
+                    pass
+            return True
+        except Exception:
+            if temp_file.is_file():
+                try:
+                    temp_file.unlink()
+                except OSError:
+                    pass
+            return False
+
+    def save_background_image(self, series_name: str, image_bytes: bytes) -> bool:
+        """
+        Saves uploaded image bytes as <series_dir>/background.jpg.
+        Validates safety, format, and writes atomically.
+        """
+        series_dir = self.root_path / series_name
+        if not self._is_safe_child(series_dir) or not series_dir.is_dir():
+            return False
+
+        if not detect_image_format(image_bytes):
+            return False
+
+        target_file = series_dir / "background.jpg"
+        if not self._is_safe_child(target_file):
+            return False
+
+        temp_file = series_dir / "background.jpg.tmp"
+        try:
+            temp_file.write_bytes(image_bytes)
+            temp_file.replace(target_file)
+            jpeg_alt = series_dir / "background.jpeg"
+            if jpeg_alt.is_file():
+                try:
+                    jpeg_alt.unlink()
+                except OSError:
+                    pass
+            return True
+        except Exception:
+            if temp_file.is_file():
+                try:
+                    temp_file.unlink()
+                except OSError:
+                    pass
+            return False
+
+    def remove_background_image(self, series_name: str) -> bool:
+        """
+        Removes <series_dir>/background.jpg (and .jpeg) so series falls back to cover.
+        """
+        series_dir = self.root_path / series_name
+        if not self._is_safe_child(series_dir) or not series_dir.is_dir():
+            return False
+
+        for fname in ("background.jpg", "background.jpeg", "background.jpg.tmp", "background.jpeg.tmp"):
+            fpath = series_dir / fname
+            if fpath.is_file():
+                try:
+                    fpath.unlink()
+                except OSError:
+                    pass
+        return True
 
     def get_reader_data(self, series_name: str) -> dict | None:
         """
@@ -230,6 +389,14 @@ class MangaLibrary:
             }
             if isinstance(data.get("summary"), str):
                 result["summary"] = data["summary"]
+            if isinstance(data.get("author"), str):
+                result["author"] = data["author"]
+            if isinstance(data.get("links"), dict):
+                clean_links = {}
+                for k, v in data["links"].items():
+                    if isinstance(k, str) and isinstance(v, str) and is_valid_http_url(v):
+                        clean_links[k] = v
+                result["links"] = clean_links
             return result
         except Exception:
             return default_data
@@ -263,6 +430,14 @@ class MangaLibrary:
         }
         if "summary" in data and isinstance(data["summary"], str):
             clean_data["summary"] = data["summary"]
+        if "author" in data and isinstance(data["author"], str):
+            clean_data["author"] = data["author"]
+        if "links" in data and isinstance(data["links"], dict):
+            clean_links = {}
+            for k, v in data["links"].items():
+                if isinstance(k, str) and isinstance(v, str) and is_valid_http_url(v):
+                    clean_links[k] = v
+            clean_data["links"] = clean_links
 
         try:
             temp_file.write_text(json.dumps(clean_data, indent=2), encoding="utf-8")
@@ -275,6 +450,46 @@ class MangaLibrary:
                 except OSError:
                     pass
             return False
+
+    def update_metadata(self, series_name: str, summary: str | None = None, author: str | None = None, links: dict | None = None) -> dict | None:
+        """
+        Updates series metadata (summary, author, links) in reader_data.json.
+        Preserves progress, bookmarks, and reader settings.
+        Returns the updated reader data dictionary on success, or None on error.
+        """
+        series_dir = self.root_path / series_name
+        if not self._is_safe_child(series_dir) or not series_dir.is_dir():
+            return None
+
+        data = self.get_reader_data(series_name)
+        if data is None:
+            return None
+
+        if summary is not None:
+            if not isinstance(summary, str):
+                return None
+            data["summary"] = summary
+
+        if author is not None:
+            if not isinstance(author, str):
+                return None
+            data["author"] = author
+
+        if links is not None:
+            if not isinstance(links, dict):
+                return None
+            validated_links = {}
+            for label, url in links.items():
+                if not isinstance(label, str) or not label.strip():
+                    return None
+                if not isinstance(url, str) or not is_valid_http_url(url):
+                    return None
+                validated_links[label.strip()] = url.strip()
+            data["links"] = validated_links
+
+        if self.save_reader_data(series_name, data):
+            return data
+        return None
 
     def update_reader_style(self, series_name: str, style: str) -> dict | None:
         """
@@ -480,15 +695,23 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                mime_type, _ = mimetypes.guess_type(str(cover_path))
-                if not mime_type:
-                    mime_type = "image/jpeg"
+                with open(cover_path, "rb") as f:
+                    header = f.read(32)
+                fmt = detect_image_format(header)
+                if fmt and fmt in SUPPORTED_IMAGE_TYPES:
+                    mime_type = SUPPORTED_IMAGE_TYPES[fmt]
+                else:
+                    mime_type, _ = mimetypes.guess_type(str(cover_path))
+                    if not mime_type:
+                        mime_type = "image/jpeg"
 
                 file_size = cover_path.stat().st_size
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", mime_type)
                 self.send_header("Content-Length", str(file_size))
-                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
                 self.end_headers()
 
                 with open(cover_path, "rb") as f:
@@ -511,15 +734,23 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                mime_type, _ = mimetypes.guess_type(str(bg_path))
-                if not mime_type:
-                    mime_type = "image/jpeg"
+                with open(bg_path, "rb") as f:
+                    header = f.read(32)
+                fmt = detect_image_format(header)
+                if fmt and fmt in SUPPORTED_IMAGE_TYPES:
+                    mime_type = SUPPORTED_IMAGE_TYPES[fmt]
+                else:
+                    mime_type, _ = mimetypes.guess_type(str(bg_path))
+                    if not mime_type:
+                        mime_type = "image/jpeg"
 
                 file_size = bg_path.stat().st_size
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", mime_type)
                 self.send_header("Content-Length", str(file_size))
-                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
                 self.end_headers()
 
                 with open(bg_path, "rb") as f:
@@ -529,8 +760,8 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 pass
             return
 
-        # 6. API: Get reader data (bookmarks, progress, preferences) for a series (/api/reader-data?series=...)
-        if path == "/api/reader-data":
+        # 6. API: Get reader data (bookmarks, progress, preferences, metadata) for a series (/api/reader-data?series=...)
+        if path in ("/api/reader-data", "/api/metadata"):
             series_name = get_param("series")
             if not series_name:
                 self._send_error("Missing required query parameter: 'series'", HTTPStatus.BAD_REQUEST)
@@ -544,6 +775,10 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
             self._send_json({
                 "series": series_name,
                 "summary": data.get("summary", ""),
+                "author": data.get("author", ""),
+                "links": data.get("links", {}),
+                "has_cover": self.library.get_cover_path(series_name) is not None,
+                "has_background": self.library.has_background_file(series_name),
                 "progress": data["progress"],
                 "bookmarks": data["bookmarks"],
                 "reader": data["reader"]
@@ -708,8 +943,8 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
             })
             return
 
-        # 4. API: Unified reader data endpoint (/api/reader-data)
-        if path == "/api/reader-data":
+        # 4. API: Unified reader data and metadata endpoint (/api/reader-data, /api/metadata)
+        if path in ("/api/reader-data", "/api/metadata"):
             body = self._read_json_body()
             if not body:
                 self._send_error("Invalid or missing JSON body", HTTPStatus.BAD_REQUEST)
@@ -721,6 +956,58 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
 
             if not series:
                 self._send_error("Missing required field: 'series'", HTTPStatus.BAD_REQUEST)
+                return
+
+            # Check if this is a metadata update action
+            is_metadata_action = (
+                action == "metadata" or
+                path == "/api/metadata" or
+                "metadata" in body or
+                (action is None and chapter is None and ("summary" in body or "author" in body or "links" in body))
+            )
+
+            if is_metadata_action:
+                meta_payload = body.get("metadata") if isinstance(body.get("metadata"), dict) else body
+
+                summary = meta_payload.get("summary")
+                author = meta_payload.get("author")
+                links = meta_payload.get("links")
+
+                if summary is not None and not isinstance(summary, str):
+                    self._send_error("Field 'summary' must be a string", HTTPStatus.BAD_REQUEST)
+                    return
+                if author is not None and not isinstance(author, str):
+                    self._send_error("Field 'author' must be a string", HTTPStatus.BAD_REQUEST)
+                    return
+                if links is not None:
+                    if not isinstance(links, dict):
+                        self._send_error("Field 'links' must be an object/dict", HTTPStatus.BAD_REQUEST)
+                        return
+                    for label, url in links.items():
+                        if not isinstance(label, str) or not label.strip():
+                            self._send_error("Link label must be a non-empty string", HTTPStatus.BAD_REQUEST)
+                            return
+                        if not isinstance(url, str) or not is_valid_http_url(url):
+                            self._send_error(f"Invalid URL for link '{label}'. Must be a valid HTTP or HTTPS URL.", HTTPStatus.BAD_REQUEST)
+                            return
+
+                data = self.library.update_metadata(series, summary=summary, author=author, links=links)
+                if data is None:
+                    self._send_error("Failed to update metadata (invalid series or data)", HTTPStatus.BAD_REQUEST)
+                    return
+
+                self._send_json({
+                    "success": True,
+                    "series": series,
+                    "summary": data.get("summary", ""),
+                    "author": data.get("author", ""),
+                    "links": data.get("links", {}),
+                    "has_cover": self.library.get_cover_path(series) is not None,
+                    "has_background": self.library.has_background_file(series),
+                    "progress": data["progress"],
+                    "bookmarks": data["bookmarks"],
+                    "reader": data["reader"]
+                })
                 return
 
             if action == "style" or (action is None and "style" in body):
@@ -760,12 +1047,179 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
             })
             return
 
+        # 5. API: Upload series cover image (/api/cover?series=...)
+        if path == "/api/cover":
+            query = parse_qs(parsed.query)
+            series_name = query.get("series", [None])[0]
+            content_type = self.headers.get("Content-Type", "")
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+            except (ValueError, TypeError):
+                content_length = 0
+
+            if content_length <= 0:
+                self._send_error("Missing request body", HTTPStatus.BAD_REQUEST)
+                return
+            if content_length > 50 * 1024 * 1024:
+                self._send_error("Payload too large (max 50MB)", HTTPStatus.BAD_REQUEST)
+                return
+
+            raw_body = self.rfile.read(content_length)
+            image_bytes = None
+
+            if "application/json" in content_type:
+                try:
+                    import base64
+                    json_data = json.loads(raw_body.decode("utf-8"))
+                    if not series_name:
+                        series_name = json_data.get("series")
+                    raw_b64 = json_data.get("image", "")
+                    if "," in raw_b64:
+                        raw_b64 = raw_b64.split(",", 1)[1]
+                    image_bytes = base64.b64decode(raw_b64)
+                except Exception:
+                    self._send_error("Invalid JSON body or base64 image data", HTTPStatus.BAD_REQUEST)
+                    return
+            else:
+                image_bytes = raw_body
+
+            if not series_name:
+                self._send_error("Missing required parameter: 'series'", HTTPStatus.BAD_REQUEST)
+                return
+
+            series_dir = self.library.root_path / series_name
+            if not self.library._is_safe_child(series_dir) or not series_dir.is_dir():
+                self._send_error("Invalid or nonexistent series", HTTPStatus.BAD_REQUEST)
+                return
+
+            if not image_bytes or not detect_image_format(image_bytes):
+                self._send_error("Invalid or unsupported image file. Supported formats: JPEG, PNG, WebP, GIF, AVIF, BMP", HTTPStatus.BAD_REQUEST)
+                return
+
+            success = self.library.save_cover_image(series_name, image_bytes)
+            if not success:
+                self._send_error("Failed to save cover image", HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+
+            self._send_json({
+                "success": True,
+                "series": series_name,
+                "cover_url": f"/api/cover?series={quote(series_name)}"
+            })
+            return
+
+        # 6. API: Upload or remove series background image (/api/background?series=...)
+        if path == "/api/background":
+            query = parse_qs(parsed.query)
+            series_name = query.get("series", [None])[0]
+            action = query.get("action", [None])[0]
+            content_type = self.headers.get("Content-Type", "")
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+            except (ValueError, TypeError):
+                content_length = 0
+
+            raw_body = b""
+            json_data = None
+            if content_length > 0:
+                if content_length > 50 * 1024 * 1024:
+                    self._send_error("Payload too large (max 50MB)", HTTPStatus.BAD_REQUEST)
+                    return
+                raw_body = self.rfile.read(content_length)
+                if "application/json" in content_type:
+                    try:
+                        json_data = json.loads(raw_body.decode("utf-8"))
+                        if not series_name:
+                            series_name = json_data.get("series")
+                        if not action:
+                            action = json_data.get("action")
+                    except Exception:
+                        pass
+
+            if not series_name:
+                self._send_error("Missing required parameter: 'series'", HTTPStatus.BAD_REQUEST)
+                return
+
+            series_dir = self.library.root_path / series_name
+            if not self.library._is_safe_child(series_dir) or not series_dir.is_dir():
+                self._send_error("Invalid or nonexistent series", HTTPStatus.BAD_REQUEST)
+                return
+
+            if action in ("remove", "delete"):
+                self.library.remove_background_image(series_name)
+                self._send_json({
+                    "success": True,
+                    "series": series_name,
+                    "action": "removed"
+                })
+                return
+
+            image_bytes = None
+            if json_data and json_data.get("image"):
+                import base64
+                try:
+                    raw_b64 = json_data["image"]
+                    if "," in raw_b64:
+                        raw_b64 = raw_b64.split(",", 1)[1]
+                    image_bytes = base64.b64decode(raw_b64)
+                except Exception:
+                    self._send_error("Invalid base64 image data", HTTPStatus.BAD_REQUEST)
+                    return
+            else:
+                image_bytes = raw_body
+
+            if not image_bytes or not detect_image_format(image_bytes):
+                self._send_error("Invalid or unsupported image file. Supported formats: JPEG, PNG, WebP, GIF, AVIF, BMP", HTTPStatus.BAD_REQUEST)
+                return
+
+            success = self.library.save_background_image(series_name, image_bytes)
+            if not success:
+                self._send_error("Failed to save background image", HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+
+            self._send_json({
+                "success": True,
+                "series": series_name,
+                "background_url": f"/api/background?series={quote(series_name)}"
+            })
+            return
+
+        self._send_error("Endpoint not found", HTTPStatus.NOT_FOUND)
+
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
+
+        def get_param(name: str):
+            vals = query.get(name)
+            return vals[0] if vals else None
+
+        if path == "/api/background":
+            series_name = get_param("series")
+            if not series_name:
+                self._send_error("Missing required parameter: 'series'", HTTPStatus.BAD_REQUEST)
+                return
+
+            series_dir = self.library.root_path / series_name
+            if not self.library._is_safe_child(series_dir) or not series_dir.is_dir():
+                self._send_error("Invalid or nonexistent series", HTTPStatus.BAD_REQUEST)
+                return
+
+            self.library.remove_background_image(series_name)
+            self._send_json({
+                "success": True,
+                "series": series_name,
+                "action": "removed"
+            })
+            return
+
         self._send_error("Endpoint not found", HTTPStatus.NOT_FOUND)
 
     def do_OPTIONS(self):
         self.send_response(HTTPStatus.NO_CONTENT)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 

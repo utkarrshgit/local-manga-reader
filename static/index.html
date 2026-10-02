@@ -101,15 +101,125 @@
 
       <!-- Series Detail: Cover Overlap & Information -->
       <div class="series-detail-layout">
-        <div class="series-cover-wrapper-large" id="series-cover-thumb-wrapper">
-          <img id="series-cover-thumb" class="series-cover-large hidden" alt="" />
-        </div>
+        <aside class="series-cover-column">
+          <div class="series-cover-wrapper-large" id="series-cover-thumb-wrapper">
+            <img id="series-cover-thumb" class="series-cover-large hidden" alt="" />
+          </div>
+          <div class="series-links-panel hidden" id="series-links-panel">
+            <h2 class="series-links-heading">Links</h2>
+            <div class="series-links-list" id="series-links-list"></div>
+          </div>
+        </aside>
         <div class="series-info-panel">
           <h1 class="view-title series-title-large" id="series-title">Series Name</h1>
           <div class="view-subtitle series-meta-row" id="series-meta">Loading chapters...</div>
-          <div class="series-summary-panel">
-            <h2 class="series-summary-heading">Summary</h2>
-            <p class="series-summary-text" id="series-summary">No summary</p>
+          <!-- Metadata Display View -->
+          <div class="series-metadata-display" id="series-metadata-display">
+            <div class="series-author hidden" id="series-author">
+              <span class="series-author-label">Author</span>
+              <span class="series-author-name" id="series-author-name"></span>
+            </div>
+            <div class="series-summary-panel hidden" id="series-summary-panel">
+              <h2 class="series-summary-heading">Summary</h2>
+              <p class="series-summary-text" id="series-summary"></p>
+            </div>
+            <div class="series-metadata-actions">
+              <button type="button" id="btn-edit-metadata" class="btn-edit-metadata" title="Edit metadata">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                </svg>
+                <span>Edit metadata</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Inline Metadata Editor -->
+          <div class="series-metadata-editor hidden" id="series-metadata-editor">
+            <div class="editor-header">
+              <h2 class="editor-heading">Edit Series Metadata</h2>
+            </div>
+
+            <!-- Cover Image Field -->
+            <div class="editor-field editor-image-section">
+              <span class="editor-label">Cover Image</span>
+              <div class="editor-image-control">
+                <div class="editor-image-preview-wrapper cover-preview-wrapper" id="editor-cover-preview-wrapper">
+                  <img id="editor-cover-preview" class="editor-image-preview" alt="Cover preview" />
+                  <div id="editor-cover-placeholder" class="editor-image-placeholder hidden">No cover</div>
+                </div>
+                <div class="editor-image-actions">
+                  <label class="btn-file-select" for="editor-cover-file" tabindex="0">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+                    </svg>
+                    <span id="editor-cover-file-name">Choose image...</span>
+                  </label>
+                  <input type="file" id="editor-cover-file" class="editor-file-input" accept="image/jpeg,image/png,image/webp,image/gif,image/avif,image/bmp,.jpg,.jpeg,.png,.webp,.gif,.avif,.bmp" />
+                  <span class="editor-file-hint">Accepts JPG, PNG, WebP, GIF, AVIF · Saved as cover.jpg</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Background Image Field -->
+            <div class="editor-field editor-image-section">
+              <span class="editor-label">Background Image</span>
+              <div class="editor-image-control">
+                <div class="editor-image-preview-wrapper bg-preview-wrapper" id="editor-bg-preview-wrapper">
+                  <img id="editor-bg-preview" class="editor-image-preview" alt="Background preview" />
+                  <div id="editor-bg-placeholder" class="editor-image-placeholder hidden">No custom background</div>
+                </div>
+                <div class="editor-image-actions">
+                  <div class="editor-image-buttons">
+                    <label class="btn-file-select" for="editor-bg-file" tabindex="0">
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+                      </svg>
+                      <span id="editor-bg-file-name">Choose image...</span>
+                    </label>
+                    <input type="file" id="editor-bg-file" class="editor-file-input" accept="image/jpeg,image/png,image/webp,image/gif,image/avif,image/bmp,.jpg,.jpeg,.png,.webp,.gif,.avif,.bmp" />
+                    <button type="button" id="btn-remove-bg" class="btn-remove-image hidden" title="Remove custom background">
+                      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6 6 18M6 6l12 12"/>
+                      </svg>
+                      <span>Remove</span>
+                    </button>
+                  </div>
+                  <span class="editor-file-hint" id="editor-bg-hint">Saved as background.jpg · Removing falls back to cover</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="editor-field">
+              <label for="editor-author" class="editor-label">Author</label>
+              <input type="text" id="editor-author" class="editor-input" placeholder="Author name" autocomplete="off" spellcheck="false" />
+            </div>
+
+            <div class="editor-field">
+              <label for="editor-summary" class="editor-label">Summary</label>
+              <textarea id="editor-summary" class="editor-textarea" placeholder="Series description..." rows="4"></textarea>
+            </div>
+
+            <div class="editor-field">
+              <div class="editor-links-header">
+                <span class="editor-label">External Links</span>
+                <button type="button" id="btn-add-link" class="btn-link-action btn-add-link">
+                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 5v14M5 12h14"/>
+                  </svg>
+                  <span>Add link</span>
+                </button>
+              </div>
+              <div id="editor-links-list" class="editor-links-list">
+                <!-- Dynamically populated link rows -->
+              </div>
+            </div>
+
+            <div id="editor-error" class="editor-error hidden" role="alert"></div>
+
+            <div class="editor-actions">
+              <button type="button" id="btn-cancel-metadata" class="btn btn-secondary btn-sm">Cancel</button>
+              <button type="button" id="btn-save-metadata" class="btn btn-primary btn-sm">Save</button>
+            </div>
           </div>
         </div>
       </div>
