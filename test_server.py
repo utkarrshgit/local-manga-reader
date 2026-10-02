@@ -4,6 +4,7 @@ import tempfile
 import shutil
 import json
 import os
+import sys
 import subprocess
 import time
 from server import MangaLibrary, natural_sort_key
@@ -1663,6 +1664,72 @@ fi
             r6 = subprocess.run([str(self.launcher_path)], env=env6, capture_output=True, text=True, input="")
             self.assertEqual(r6.returncode, 0)
             self.assertIn("No manga library folder selected.", r6.stdout)
+
+
+class TestWindowsLauncher(unittest.TestCase):
+    def setUp(self):
+        self.project_dir = Path(__file__).parent.resolve()
+        self.batch_path = self.project_dir / "start-windows.bat"
+
+    def test_windows_launcher_attributes_and_no_hardcoded_paths(self):
+        """Verify start-windows.bat existence, dynamic path resolution, and no hardcoded personal paths."""
+        self.assertTrue(self.batch_path.exists(), "start-windows.bat does not exist")
+
+        content = self.batch_path.read_text(encoding="utf-8")
+        # Must not contain user's personal absolute paths
+        self.assertNotIn("/Users/utkarshjaiswal", content)
+        self.assertNotIn("utkarshjaiswal", content)
+
+        # Must locate project relative to script using %~dp0
+        self.assertIn("%~dp0", content)
+
+        # Must configure outside git repo under %LOCALAPPDATA%\LocalMangaReader\library_path
+        self.assertIn("LocalMangaReader", content)
+        self.assertIn("library_path", content)
+        self.assertIn("LOCALAPPDATA", content)
+
+        # Must support Python detection (py -3 and python)
+        self.assertIn("py -3", content)
+        self.assertIn("python", content)
+
+        # Must support native Windows folder picker via PowerShell
+        self.assertIn("FolderBrowserDialog", content)
+
+        # Must poll /api/status before opening browser
+        self.assertIn("/api/status", content)
+        self.assertIn("http://localhost:", content)
+
+        # Must run server.py with --dir
+        self.assertIn("server.py", content)
+        self.assertIn("--dir", content)
+
+    def test_server_windows_config_path_resolution(self):
+        """Verify get_config_file_path() resolves to %LOCALAPPDATA%\\LocalMangaReader\\library_path on win32."""
+        from server import get_config_file_path
+        orig_platform = sys.platform
+        orig_env_file = os.environ.get("LOCAL_MANGA_CONFIG_FILE")
+        orig_env_dir = os.environ.get("LOCAL_MANGA_CONFIG_DIR")
+        orig_localappdata = os.environ.get("LOCALAPPDATA")
+
+        try:
+            sys.platform = "win32"
+            os.environ.pop("LOCAL_MANGA_CONFIG_FILE", None)
+            os.environ.pop("LOCAL_MANGA_CONFIG_DIR", None)
+            os.environ["LOCALAPPDATA"] = r"C:\Users\SampleUser\AppData\Local"
+
+            resolved = get_config_file_path()
+            expected = Path(r"C:\Users\SampleUser\AppData\Local") / "LocalMangaReader" / "library_path"
+            self.assertEqual(resolved, expected)
+        finally:
+            sys.platform = orig_platform
+            if orig_env_file:
+                os.environ["LOCAL_MANGA_CONFIG_FILE"] = orig_env_file
+            if orig_env_dir:
+                os.environ["LOCAL_MANGA_CONFIG_DIR"] = orig_env_dir
+            if orig_localappdata:
+                os.environ["LOCALAPPDATA"] = orig_localappdata
+            else:
+                os.environ.pop("LOCALAPPDATA", None)
 
 
 if __name__ == "__main__":

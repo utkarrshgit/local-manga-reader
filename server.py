@@ -23,11 +23,12 @@ def get_config_file_path() -> Path:
     """Returns path to the library path config file outside the git repository."""
     if os.environ.get("LOCAL_MANGA_CONFIG_FILE"):
         return Path(os.environ["LOCAL_MANGA_CONFIG_FILE"])
-    config_dir = os.environ.get(
-        "LOCAL_MANGA_CONFIG_DIR",
-        os.path.expanduser("~/Library/Application Support/LocalMangaReader")
-    )
-    return Path(config_dir) / "library_path"
+    if os.environ.get("LOCAL_MANGA_CONFIG_DIR"):
+        return Path(os.environ["LOCAL_MANGA_CONFIG_DIR"]) / "library_path"
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA", os.path.expanduser(r"~\AppData\Local"))
+        return Path(local_app_data) / "LocalMangaReader" / "library_path"
+    return Path(os.path.expanduser("~/Library/Application Support/LocalMangaReader")) / "library_path"
 
 
 def save_library_path_config(path_str: str) -> None:
@@ -65,12 +66,34 @@ DEFAULT_LIBRARY_DIR = get_default_library_dir()
 
 def choose_folder_native(prompt: str = "Select your Manga library folder:") -> str | None:
     """
-    Prompts user with macOS native folder selection dialog via osascript.
+    Prompts user with native folder selection dialog (osascript on macOS, PowerShell on Windows).
     Supports MOCK_FOLDER_PICKER_RESULT environment variable for automated testing.
     """
     if "MOCK_FOLDER_PICKER_RESULT" in os.environ:
         val = os.environ["MOCK_FOLDER_PICKER_RESULT"].strip()
         return val if val else None
+
+    if sys.platform == "win32":
+        ps_cmd = (
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
+            f"$f.Description = '{prompt}'; "
+            "$f.ShowNewFolderButton = $true; "
+            "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath }"
+        )
+        try:
+            proc = subprocess.run(
+                ["powershell", "-STA", "-NoProfile", "-Command", ps_cmd],
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+            if proc.returncode == 0:
+                chosen = proc.stdout.strip()
+                return chosen if chosen else None
+            return None
+        except Exception:
+            return None
 
     script = f'''
     tell application "System Events"
