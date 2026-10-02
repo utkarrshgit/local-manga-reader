@@ -9,7 +9,7 @@
 </head>
 <body>
   <!-- App Header -->
-  <header class="app-header">
+  <header class="app-header" id="app-header">
     <div class="header-container">
       <div class="brand">
         <a href="#/" class="logo-link" title="Go to Library">
@@ -47,10 +47,10 @@
 
     <!-- 1. Library View -->
     <section id="view-library" class="view">
-      <div class="view-header">
+      <div class="view-header library-header">
         <div>
-          <h1 class="view-title">Library</h1>
-          <p class="view-subtitle" id="library-subtitle">Scanning local collection...</p>
+          <h1 class="view-title library-title">Library</h1>
+          <p class="view-subtitle library-subtitle" id="library-subtitle">Scanning local collection...</p>
         </div>
       </div>
 
@@ -70,27 +70,34 @@
 
     <!-- 2. Chapter List View -->
     <section id="view-chapters" class="view hidden">
-      <div class="nav-bar">
-        <button id="btn-back-to-library" class="btn btn-secondary">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
-          Back to Library
-        </button>
+      <!-- Full-Width Atmospheric Hero Background -->
+      <div class="series-hero-banner" id="series-hero">
+        <div class="series-hero-backdrop" id="series-hero-backdrop" aria-hidden="true"></div>
+        <div class="series-hero-overlay" aria-hidden="true"></div>
       </div>
 
-      <div class="series-header-layout">
-        <div class="series-cover-thumb-wrapper hidden" id="series-cover-thumb-wrapper">
-          <img id="series-cover-thumb" class="series-cover-thumb hidden" alt="" />
+      <!-- Series Detail: Cover Overlap & Information -->
+      <div class="series-detail-layout">
+        <div class="series-cover-wrapper-large" id="series-cover-thumb-wrapper">
+          <img id="series-cover-thumb" class="series-cover-large hidden" alt="" />
         </div>
-        <div class="series-header-info">
-          <h1 class="view-title" id="series-title">Series Name</h1>
-          <p class="view-subtitle" id="series-meta">Loading chapters...</p>
+        <div class="series-info-panel">
+          <h1 class="view-title series-title-large" id="series-title">Series Name</h1>
+          <div class="view-subtitle series-meta-row" id="series-meta">Loading chapters...</div>
+          <div class="series-summary-panel">
+            <h2 class="series-summary-heading">Summary</h2>
+            <p class="series-summary-text" id="series-summary">No summary</p>
+          </div>
         </div>
       </div>
 
-      <div id="chapters-list" class="chapters-list">
-        <!-- Chapter items injected by JS -->
+      <div class="chapters-section">
+        <div class="chapters-section-header">
+          <h2 class="chapters-section-title">Chapters</h2>
+        </div>
+        <div id="chapters-list" class="chapters-list">
+          <!-- Chapter items injected by JS -->
+        </div>
       </div>
 
       <!-- Empty Chapters State -->

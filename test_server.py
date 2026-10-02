@@ -650,6 +650,64 @@ class TestPhase6Features(unittest.TestCase):
         })
         self.assertIn("400", headers_err)
 
+    def test_series_background_priority_and_fallback(self):
+        """15. Background selection priority: background.jpg -> cover.jpg -> None."""
+        series_dir = self.lib_path / "HeroSeries"
+        series_dir.mkdir(parents=True)
+        bg_file = series_dir / "background.jpg"
+        cover_file = series_dir / "cover.jpg"
+
+        # Neither exists
+        self.assertIsNone(self.library.get_background_path("HeroSeries"))
+
+        # cover.jpg exists (fallback)
+        cover_file.write_bytes(b"COVER_DATA")
+        self.assertEqual(self.library.get_background_path("HeroSeries"), cover_file)
+
+        # background.jpg exists (priority 1)
+        bg_file.write_bytes(b"BACKGROUND_DATA")
+        self.assertEqual(self.library.get_background_path("HeroSeries"), bg_file)
+
+    def test_api_background_endpoint_serves_image(self):
+        """16. GET /api/background?series=... serves image with 200 OK and no-cache."""
+        series_dir = self.lib_path / "HeroSeries"
+        series_dir.mkdir(parents=True, exist_ok=True)
+        (series_dir / "background.jpg").write_bytes(b"BG_JPG_DATA")
+
+        headers, body = self._simulate_get("/api/background?series=HeroSeries")
+        self.assertIn("200 OK", headers)
+        self.assertIn("Content-Type: image/jpeg", headers)
+        self.assertIn("Cache-Control: no-cache", headers)
+        self.assertEqual(body, b"BG_JPG_DATA")
+
+    def test_api_background_endpoint_404_and_traversal(self):
+        """17. GET /api/background 404s when not found and blocks traversal."""
+        (self.lib_path / "NoBgSeries").mkdir()
+        headers, _ = self._simulate_get("/api/background?series=NoBgSeries")
+        self.assertIn("404", headers)
+
+        headers, _ = self._simulate_get("/api/background?series=../../etc")
+        self.assertIn("404", headers)
+
+    def test_reader_data_summary_preservation(self):
+        """18. reader_data.json preserves optional summary field safely."""
+        series_dir = self.lib_path / "SummarySeries"
+        series_dir.mkdir(parents=True)
+
+        payload = {
+            "summary": "An epic journey in an editorial digital reader.",
+            "progress": {"Chapter 1": "1.jpg"},
+            "bookmarks": ["Chapter 1"],
+            "reader": {"style": "spaced"}
+        }
+        self.library.save_reader_data("SummarySeries", payload)
+
+        data = self.library.get_reader_data("SummarySeries")
+        self.assertEqual(data["summary"], "An epic journey in an editorial digital reader.")
+        self.assertEqual(data["progress"], {"Chapter 1": "1.jpg"})
+        self.assertEqual(data["bookmarks"], ["Chapter 1"])
+        self.assertEqual(data["reader"]["style"], "spaced")
+
 
 if __name__ == "__main__":
     unittest.main()

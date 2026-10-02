@@ -20,6 +20,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const seriesMeta = document.getElementById("series-meta");
   const seriesCoverThumbWrapper = document.getElementById("series-cover-thumb-wrapper");
   const seriesCoverThumb = document.getElementById("series-cover-thumb");
+  const seriesHeroBackdrop = document.getElementById("series-hero-backdrop");
+  const seriesSummary = document.getElementById("series-summary");
 
   // DOM Elements - Reader
   const readerSeriesName = document.getElementById("reader-series-name");
@@ -48,6 +50,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const iconFullscreenExit = btnReaderFullscreen ? btnReaderFullscreen.querySelector(".icon-fullscreen-exit") : null;
 
   // DOM Elements - Header & Navigation
+  const appHeader = document.getElementById("app-header");
   const breadcrumbs = document.getElementById("breadcrumbs");
   const statusBanner = document.getElementById("status-banner");
   const btnRefresh = document.getElementById("btn-refresh");
@@ -219,10 +222,81 @@ document.addEventListener("DOMContentLoaded", () => {
     statusBanner.classList.add("hidden");
   }
 
+  // Series Detail Page: Scroll-based Hero & Header Transition
+  let seriesScrollTicking = false;
+
+  function updateSeriesScrollTransition() {
+    seriesScrollTicking = false;
+    if (!document.body.classList.contains("series-active")) return;
+
+    const banner = document.getElementById("series-hero");
+    if (!banner || !seriesHeroBackdrop) return;
+
+    // Transition range dynamically matches the hero banner height
+    const heroHeight = banner.offsetHeight || 360;
+    const scrollY = window.scrollY || window.pageYOffset || 0;
+    const progress = Math.min(1, Math.max(0, scrollY / heroHeight));
+
+    // 1. Background image:
+    // At top: sharp, recognizable (filter: none, opacity: 0.70)
+    // Scrolling through hero: progressively blurs and fades toward page background
+    // After hero: effectively invisible
+    if (progress >= 1) {
+      if (seriesHeroBackdrop.style.visibility !== "hidden") {
+        seriesHeroBackdrop.style.visibility = "hidden";
+      }
+      seriesHeroBackdrop.style.opacity = "0";
+      seriesHeroBackdrop.style.filter = "blur(28px)";
+      seriesHeroBackdrop.style.webkitFilter = "blur(28px)";
+    } else {
+      if (seriesHeroBackdrop.style.visibility !== "visible") {
+        seriesHeroBackdrop.style.visibility = "visible";
+      }
+      seriesHeroBackdrop.style.opacity = (0.70 * (1 - progress)).toFixed(3);
+      if (progress === 0) {
+        seriesHeroBackdrop.style.filter = "none";
+        seriesHeroBackdrop.style.webkitFilter = "none";
+      } else {
+        const blurPx = (progress * 28).toFixed(1);
+        seriesHeroBackdrop.style.filter = `blur(${blurPx}px)`;
+        seriesHeroBackdrop.style.webkitFilter = `blur(${blurPx}px)`;
+      }
+    }
+
+    // 2. Global header:
+    // At top: translucent dark charcoal with subtle red tint (~65% transparent)
+    // Scrolling through hero: gradually becomes more opaque and solid
+    // After hero: fully opaque normal solid dark header
+    if (appHeader) {
+      const headerAlpha = (0.35 + (0.95 - 0.35) * progress).toFixed(3);
+      const borderAlpha = (0.25 + (1.0 - 0.25) * progress).toFixed(3);
+      appHeader.style.backgroundColor = `rgba(18, 14, 16, ${headerAlpha})`;
+      appHeader.style.borderBottomColor = `rgba(42, 32, 34, ${borderAlpha})`;
+    }
+  }
+
+  function onSeriesScroll() {
+    if (!seriesScrollTicking) {
+      seriesScrollTicking = true;
+      requestAnimationFrame(updateSeriesScrollTransition);
+    }
+  }
+
+  function startSeriesScrollTransition() {
+    window.addEventListener("scroll", onSeriesScroll, { passive: true });
+    updateSeriesScrollTransition();
+  }
+
+  function stopSeriesScrollTransition() {
+    window.removeEventListener("scroll", onSeriesScroll);
+    seriesScrollTicking = false;
+  }
+
   // View switcher
   function switchView(viewName) {
     clearError();
     document.body.classList.toggle("reader-active", viewName === "reader");
+    document.body.classList.toggle("series-active", viewName === "chapters");
     viewLibrary.classList.toggle("hidden", viewName !== "library");
     viewChapters.classList.toggle("hidden", viewName !== "chapters");
     viewReader.classList.toggle("hidden", viewName !== "reader");
@@ -250,10 +324,30 @@ document.addEventListener("DOMContentLoaded", () => {
       currentNextChapter = null;
     }
 
-    if (viewName !== "chapters" && seriesCoverThumbWrapper && seriesCoverThumb) {
-      seriesCoverThumbWrapper.classList.add("hidden");
-      seriesCoverThumb.classList.add("hidden");
-      seriesCoverThumb.src = "";
+    if (viewName !== "chapters") {
+      stopSeriesScrollTransition();
+      if (seriesCoverThumbWrapper && seriesCoverThumb) {
+        seriesCoverThumbWrapper.classList.add("hidden");
+        seriesCoverThumb.classList.add("hidden");
+        seriesCoverThumb.src = "";
+      }
+      if (seriesHeroBackdrop) {
+        seriesHeroBackdrop.classList.remove("loaded");
+        seriesHeroBackdrop.style.backgroundImage = "none";
+        seriesHeroBackdrop.style.removeProperty("filter");
+        seriesHeroBackdrop.style.removeProperty("-webkit-filter");
+        seriesHeroBackdrop.style.removeProperty("opacity");
+        seriesHeroBackdrop.style.visibility = "";
+      }
+      if (seriesSummary) {
+        seriesSummary.textContent = "No summary";
+      }
+      if (appHeader) {
+        appHeader.style.removeProperty("background-color");
+        appHeader.style.removeProperty("border-bottom-color");
+      }
+    } else {
+      startSeriesScrollTransition();
     }
     window.scrollTo({ top: 0, behavior: "instant" });
   }
@@ -540,6 +634,9 @@ document.addEventListener("DOMContentLoaded", () => {
     switchView("chapters");
     seriesTitle.textContent = seriesName;
     seriesMeta.textContent = "Loading chapters...";
+    if (seriesSummary) {
+      seriesSummary.textContent = "No summary";
+    }
     chaptersList.innerHTML = "";
     chaptersEmpty.classList.add("hidden");
 
@@ -547,6 +644,19 @@ document.addEventListener("DOMContentLoaded", () => {
       { label: "Library", href: "#/" },
       { label: seriesName }
     ]);
+
+    if (seriesHeroBackdrop) {
+      const bgUrl = `/api/background?series=${encodeURIComponent(seriesName)}`;
+      seriesHeroBackdrop.style.backgroundImage = `url("${bgUrl}")`;
+      seriesHeroBackdrop.classList.add("loaded");
+
+      const testImg = new Image();
+      testImg.onerror = () => {
+        seriesHeroBackdrop.style.backgroundImage = "none";
+        seriesHeroBackdrop.classList.remove("loaded");
+      };
+      testImg.src = bgUrl;
+    }
 
     if (seriesCoverThumbWrapper && seriesCoverThumb) {
       seriesCoverThumb.onload = () => {
@@ -571,6 +681,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
       currentSeriesBookmarks = new Set(readerData.bookmarks || []);
       currentSeriesProgress = readerData.progress || {};
+
+      if (seriesSummary) {
+        const summaryText = (readerData && readerData.summary && readerData.summary.trim())
+          ? readerData.summary.trim()
+          : "No summary";
+        seriesSummary.textContent = summaryText;
+      }
 
       const chapters = data.chapters || [];
       chaptersList.innerHTML = "";
@@ -882,9 +999,11 @@ document.addEventListener("DOMContentLoaded", () => {
     handleRoute();
   });
 
-  btnBackToLibrary.addEventListener("click", () => {
-    window.location.hash = "#/";
-  });
+  if (btnBackToLibrary) {
+    btnBackToLibrary.addEventListener("click", () => {
+      window.location.hash = "#/";
+    });
+  }
 
   // Reader Back Buttons
   function navigateBackToChapters() {

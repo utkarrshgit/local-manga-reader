@@ -154,9 +154,33 @@ class MangaLibrary:
 
         return None
 
+    def get_background_path(self, series_name: str) -> Path | None:
+        """
+        Resolves the atmospheric background image path for a series hero.
+        Priority:
+        1. <series_dir>/background.jpg
+        2. Fallback to <series_dir>/cover.jpg
+        Returns None if neither exists.
+        """
+        series_dir = self.root_path / series_name
+        if not self._is_safe_child(series_dir) or not series_dir.is_dir():
+            return None
+
+        # Priority 1: <series_dir>/background.jpg
+        bg_candidate = series_dir / "background.jpg"
+        if bg_candidate.is_file():
+            return bg_candidate
+
+        # Priority 2: Fallback to <series_dir>/cover.jpg
+        cover_candidate = series_dir / "cover.jpg"
+        if cover_candidate.is_file():
+            return cover_candidate
+
+        return None
+
     def get_reader_data(self, series_name: str) -> dict | None:
         """
-        Retrieves reader data (bookmarks, progress, and preferences) for a given series.
+        Retrieves reader data (bookmarks, progress, preferences, and summary) for a given series.
         Returns default dict if file does not exist or is malformed.
         Returns None if series_name is invalid or unsafe.
         """
@@ -197,13 +221,16 @@ class MangaLibrary:
                 if raw_style in ("spaced", "seamless"):
                     style = raw_style
 
-            return {
+            result = {
                 "progress": progress,
                 "bookmarks": bookmarks,
                 "reader": {
                     "style": style
                 }
             }
+            if isinstance(data.get("summary"), str):
+                result["summary"] = data["summary"]
+            return result
         except Exception:
             return default_data
 
@@ -234,6 +261,8 @@ class MangaLibrary:
                 "style": style
             }
         }
+        if "summary" in data and isinstance(data["summary"], str):
+            clean_data["summary"] = data["summary"]
 
         try:
             temp_file.write_text(json.dumps(clean_data, indent=2), encoding="utf-8")
@@ -469,6 +498,37 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 pass
             return
 
+        # 5b. API: Serve series background image (/api/background?series=...)
+        if path == "/api/background":
+            series_name = get_param("series")
+            if not series_name:
+                self._send_error("Missing required query parameter: 'series'", HTTPStatus.BAD_REQUEST)
+                return
+
+            bg_path = self.library.get_background_path(series_name)
+            if not bg_path or not bg_path.is_file():
+                self._send_error(f"Background not found for series: {series_name}", HTTPStatus.NOT_FOUND)
+                return
+
+            try:
+                mime_type, _ = mimetypes.guess_type(str(bg_path))
+                if not mime_type:
+                    mime_type = "image/jpeg"
+
+                file_size = bg_path.stat().st_size
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", mime_type)
+                self.send_header("Content-Length", str(file_size))
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+
+                with open(bg_path, "rb") as f:
+                    while chunk := f.read(65536):
+                        self.wfile.write(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
+
         # 6. API: Get reader data (bookmarks, progress, preferences) for a series (/api/reader-data?series=...)
         if path == "/api/reader-data":
             series_name = get_param("series")
@@ -483,6 +543,7 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
 
             self._send_json({
                 "series": series_name,
+                "summary": data.get("summary", ""),
                 "progress": data["progress"],
                 "bookmarks": data["bookmarks"],
                 "reader": data["reader"]
