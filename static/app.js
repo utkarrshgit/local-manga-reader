@@ -70,6 +70,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentPrevChapter = null;
   let currentNextChapter = null;
   let currentChapterImages = [];
+  const chapterImagesCache = new Map();
 
   // Reading progress observer state
   let readerObserver = null;
@@ -530,6 +531,67 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // Helper to fetch reading progress info for a series in library view
+  async function fetchSeriesProgressInfo(seriesName) {
+    try {
+      const readerData = await fetchReaderData(seriesName);
+      const progress = readerData && readerData.progress ? readerData.progress : {};
+      const progressChapters = Object.keys(progress);
+      if (progressChapters.length === 0) {
+        return { hasProgress: false };
+      }
+
+      // Fetch chapters list to respect natural reading order
+      const chRes = await fetch(`/api/chapters?series=${encodeURIComponent(seriesName)}`);
+      if (!chRes.ok) return { hasProgress: false };
+      const chData = await chRes.json();
+      const chapters = chData.chapters || [];
+      if (chapters.length === 0) return { hasProgress: false };
+
+      // Find the latest chapter in natural reading order that exists in progress
+      let activeChapter = null;
+      for (let i = chapters.length - 1; i >= 0; i--) {
+        if (progress[chapters[i].name]) {
+          activeChapter = chapters[i];
+          break;
+        }
+      }
+
+      if (!activeChapter) {
+        const fallbackName = progressChapters[progressChapters.length - 1];
+        activeChapter = chapters.find((c) => c.name === fallbackName) || { name: fallbackName, image_count: 0 };
+      }
+
+      const savedImage = progress[activeChapter.name];
+      let percentage = 0;
+
+      if (savedImage) {
+        try {
+          const imgRes = await fetch(`/api/images?series=${encodeURIComponent(seriesName)}&chapter=${encodeURIComponent(activeChapter.name)}`);
+          if (imgRes.ok) {
+            const imgData = await imgRes.json();
+            const images = imgData.images || [];
+            if (images.length > 0) {
+              const imgIndex = images.findIndex((img) => img.filename === savedImage);
+              const pageNum = imgIndex >= 0 ? imgIndex + 1 : 1;
+              percentage = Math.min(100, Math.max(1, Math.round((pageNum / images.length) * 100)));
+            }
+          }
+        } catch {
+          percentage = 0;
+        }
+      }
+
+      return {
+        hasProgress: true,
+        chapterName: activeChapter.name,
+        percentage: percentage
+      };
+    } catch {
+      return { hasProgress: false };
+    }
+  }
+
   // 1. Load Library View
   async function loadLibrary() {
     switchView("library");
@@ -541,6 +603,16 @@ document.addEventListener("DOMContentLoaded", () => {
       const data = await res.json();
 
       allSeriesList = data.series || [];
+
+      // Concurrently resolve existing progress data for all series
+      if (allSeriesList.length > 0) {
+        await Promise.all(
+          allSeriesList.map(async (s) => {
+            s.progressInfo = await fetchSeriesProgressInfo(s.name);
+          })
+        );
+      }
+
       renderLibrarySeries();
     } catch (err) {
       showError(`Failed to load library: ${err.message}`);
@@ -606,9 +678,37 @@ document.addEventListener("DOMContentLoaded", () => {
       card.setAttribute("role", "button");
       card.setAttribute("tabindex", "0");
 
+      const countText = `${s.chapter_count} ${s.chapter_count === 1 ? "chapter" : "chapters"}`;
+      const prog = s.progressInfo;
+
+      let progressEdgeHtml = "";
+      let readingHtml = "";
+      if (prog && prog.hasProgress && prog.chapterName) {
+        const percent = typeof prog.percentage === "number" ? prog.percentage : 0;
+        const targetChapter = prog.chapterName;
+        const readUrl = `#/read/${encodeURIComponent(s.name)}/${encodeURIComponent(targetChapter)}`;
+        progressEdgeHtml = `
+          <div class="series-cover-progress" aria-hidden="true">
+            <div class="series-cover-progress-fill" style="width: ${percent}%;"></div>
+          </div>
+        `;
+        readingHtml = `
+          <div class="series-card-status">${escapeHtml(targetChapter)}</div>
+          <a href="${readUrl}" class="series-card-continue" title="Continue reading ${escapeHtml(targetChapter)}">
+            <span class="continue-text">Continue reading</span>
+            <span class="continue-arrow" aria-hidden="true">→</span>
+          </a>
+        `;
+      } else {
+        readingHtml = `
+          <div class="series-card-status status-unstarted">Not started</div>
+        `;
+      }
+
       const coverHtml = s.has_cover && s.cover_url
         ? `<div class="series-cover-wrapper">
              <img class="series-cover-img" src="${s.cover_url}" alt="${escapeHtml(s.name)} cover" loading="lazy" />
+             ${progressEdgeHtml}
            </div>`
         : `<div class="series-cover-wrapper series-cover-placeholder">
              <svg class="placeholder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -616,18 +716,15 @@ document.addEventListener("DOMContentLoaded", () => {
                <path d="M6 6h10"/>
                <path d="M6 10h10"/>
              </svg>
+             ${progressEdgeHtml}
            </div>`;
 
       card.innerHTML = `
         ${coverHtml}
         <div class="series-card-content">
           <div class="series-card-title" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
-          <div class="series-card-footer">
-            <span class="series-card-count">${s.chapter_count} ${s.chapter_count === 1 ? "chapter" : "chapters"}</span>
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" class="chapter-arrow">
-              <path d="M9 18l6-6-6-6"/>
-            </svg>
-          </div>
+          <div class="series-card-meta">${countText}</div>
+          ${readingHtml}
         </div>
       `;
 
@@ -638,6 +735,7 @@ document.addEventListener("DOMContentLoaded", () => {
           const wrapper = card.querySelector(".series-cover-wrapper");
           if (wrapper) {
             wrapper.className = "series-cover-wrapper series-cover-placeholder";
+            const progEdge = wrapper.querySelector(".series-cover-progress");
             wrapper.innerHTML = `
               <svg class="placeholder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                 <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
@@ -645,15 +743,28 @@ document.addEventListener("DOMContentLoaded", () => {
                 <path d="M6 10h10"/>
               </svg>
             `;
+            if (progEdge) {
+              wrapper.appendChild(progEdge);
+            }
           }
         });
       }
 
-      card.addEventListener("click", () => {
+      const continueLink = card.querySelector(".series-card-continue");
+      if (continueLink) {
+        continueLink.addEventListener("click", (e) => {
+          e.stopPropagation();
+          window.location.hash = continueLink.getAttribute("href");
+        });
+      }
+
+      card.addEventListener("click", (e) => {
+        if (e.target.closest(".series-card-continue")) return;
         window.location.hash = `#/series/${encodeURIComponent(s.name)}`;
       });
 
       card.addEventListener("keydown", (e) => {
+        if (e.target.closest(".series-card-continue")) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           window.location.hash = `#/series/${encodeURIComponent(s.name)}`;
@@ -738,6 +849,56 @@ document.addEventListener("DOMContentLoaded", () => {
       const countText = `${chapters.length} ${chapters.length === 1 ? "chapter" : "chapters"}`;
       seriesMeta.textContent = bookmarkCount > 0 ? `${countText} · ${bookmarkCount} bookmarked` : countText;
 
+      // Compute reading progress percentage for chapters with saved progress
+      const chapterProgressMap = new Map();
+      const progressChapters = chapters.filter((ch) => currentSeriesProgress[ch.name]);
+      if (progressChapters.length > 0) {
+        await Promise.all(
+          progressChapters.map(async (ch) => {
+            const savedImage = currentSeriesProgress[ch.name];
+            if (!savedImage) return;
+
+            const cacheKey = `${seriesName}:::${ch.name}`;
+            let images = chapterImagesCache ? chapterImagesCache.get(cacheKey) : null;
+            if (!images) {
+              try {
+                const imgRes = await fetch(
+                  `/api/images?series=${encodeURIComponent(seriesName)}&chapter=${encodeURIComponent(ch.name)}`
+                );
+                if (imgRes.ok) {
+                  const imgData = await imgRes.json();
+                  images = imgData.images || [];
+                  if (chapterImagesCache) chapterImagesCache.set(cacheKey, images);
+                }
+              } catch {
+                images = null;
+              }
+            }
+
+            if (images && images.length > 0) {
+              const imgIndex = images.findIndex((img) => img.filename === savedImage);
+              const pageNum = imgIndex >= 0 ? imgIndex + 1 : 1;
+              const pct = Math.min(100, Math.max(1, Math.round((pageNum / images.length) * 100)));
+              chapterProgressMap.set(ch.name, pct);
+              return;
+            }
+
+            // Fallback estimation using chapter.image_count and numeric match
+            if (ch.image_count > 0) {
+              const match = savedImage.match(/(\d+)(?:\.[^.]+)?$/);
+              if (match) {
+                const num = parseInt(match[1], 10);
+                if (!isNaN(num) && num >= 1) {
+                  const pageNum = Math.min(num, ch.image_count);
+                  const pct = Math.min(100, Math.max(1, Math.round((pageNum / ch.image_count) * 100)));
+                  chapterProgressMap.set(ch.name, pct);
+                }
+              }
+            }
+          })
+        );
+      }
+
       chapters.forEach((ch) => {
         const item = document.createElement("div");
         item.className = "chapter-item";
@@ -745,19 +906,21 @@ document.addEventListener("DOMContentLoaded", () => {
         item.setAttribute("tabindex", "0");
 
         const isBookmarked = currentSeriesBookmarks.has(ch.name);
+        const hasProgress = chapterProgressMap.has(ch.name);
+        const progressPct = hasProgress ? chapterProgressMap.get(ch.name) : null;
 
         item.innerHTML = `
           <div class="chapter-info">
-            <button class="btn-chapter-bookmark ${isBookmarked ? "bookmarked" : ""}" title="${isBookmarked ? "Remove bookmark" : "Bookmark chapter"}" aria-label="Bookmark">
+            <button class="btn-chapter-bookmark ${isBookmarked ? "bookmarked" : ""}" title="${isBookmarked ? "Remove bookmark" : "Bookmark chapter"}" aria-label="${isBookmarked ? "Remove bookmark" : "Bookmark chapter"}">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
               </svg>
             </button>
             <span class="chapter-title">${escapeHtml(ch.name)}</span>
-            ${isBookmarked ? `<span class="badge badge-bookmark"><svg viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>Bookmarked</span>` : ""}
           </div>
           <div class="chapter-actions">
-            <span class="badge">${ch.image_count} pages</span>
+            <span class="chapter-progress">${progressPct != null ? `${progressPct}%` : ""}</span>
+            <span class="chapter-pages">${ch.image_count} ${ch.image_count === 1 ? "page" : "pages"}</span>
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" class="chapter-arrow">
               <path d="M9 18l6-6-6-6"/>
             </svg>
@@ -778,6 +941,14 @@ document.addEventListener("DOMContentLoaded", () => {
         // Row click navigates to chapter reader
         item.addEventListener("click", () => {
           window.location.hash = `#/read/${encodeURIComponent(seriesName)}/${encodeURIComponent(ch.name)}`;
+        });
+
+        // Keyboard navigation (Enter or Space)
+        item.addEventListener("keydown", (e) => {
+          if ((e.key === "Enter" || e.key === " ") && e.target === item) {
+            e.preventDefault();
+            window.location.hash = `#/read/${encodeURIComponent(seriesName)}/${encodeURIComponent(ch.name)}`;
+          }
         });
 
         chaptersList.appendChild(item);
