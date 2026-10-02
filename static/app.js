@@ -12,6 +12,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const seriesGrid = document.getElementById("series-grid");
   const libraryEmpty = document.getElementById("library-empty");
   const librarySubtitle = document.getElementById("library-subtitle");
+  const librarySearch = document.getElementById("library-search");
+  const librarySearchClear = document.getElementById("library-search-clear");
+  const librarySort = document.getElementById("library-sort");
+  const libraryNoResults = document.getElementById("library-no-results");
 
   // DOM Elements - Chapters
   const chaptersList = document.getElementById("chapters-list");
@@ -51,12 +55,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // DOM Elements - Header & Navigation
   const appHeader = document.getElementById("app-header");
-  const breadcrumbs = document.getElementById("breadcrumbs");
+  const headerSeriesTitle = document.getElementById("header-series-title");
+  const headerBackLink = document.getElementById("header-back-link");
   const statusBanner = document.getElementById("status-banner");
-  const btnRefresh = document.getElementById("btn-refresh");
-  const btnBackToLibrary = document.getElementById("btn-back-to-library");
 
   // State
+  let allSeriesList = [];
+  let librarySearchQuery = "";
+  let librarySortMode = "az";
   let currentSeries = null;
   let currentChapter = null;
   let currentSeriesBookmarks = new Set();
@@ -325,6 +331,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (viewName !== "chapters") {
+      if (headerSeriesTitle) {
+        headerSeriesTitle.textContent = "";
+        headerSeriesTitle.title = "";
+      }
       stopSeriesScrollTransition();
       if (seriesCoverThumbWrapper && seriesCoverThumb) {
         seriesCoverThumbWrapper.classList.add("hidden");
@@ -449,30 +459,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Breadcrumbs builder
-  function updateBreadcrumbs(items) {
-    breadcrumbs.innerHTML = "";
-    items.forEach((item, index) => {
-      if (index > 0) {
-        const sep = document.createElement("span");
-        sep.className = "separator";
-        sep.textContent = "/";
-        breadcrumbs.appendChild(sep);
-      }
-
-      if (item.href) {
-        const link = document.createElement("a");
-        link.href = item.href;
-        link.textContent = item.label;
-        breadcrumbs.appendChild(link);
-      } else {
-        const current = document.createElement("span");
-        current.className = "crumb active";
-        current.textContent = item.label;
-        breadcrumbs.appendChild(current);
-      }
-    });
-  }
 
   // API Helper: Fetch Reader Data (Bookmarks & Progress)
   async function fetchReaderData(seriesName) {
@@ -547,85 +533,135 @@ document.addEventListener("DOMContentLoaded", () => {
   // 1. Load Library View
   async function loadLibrary() {
     switchView("library");
-    updateBreadcrumbs([{ label: "Library" }]);
-    librarySubtitle.textContent = "Scanning local collection...";
+    librarySubtitle.textContent = "";
 
     try {
       const res = await fetch("/api/series");
       if (!res.ok) throw new Error(`HTTP error ${res.status}`);
       const data = await res.json();
 
-      const series = data.series || [];
-      seriesGrid.innerHTML = "";
-
-      if (series.length === 0) {
-        librarySubtitle.textContent = `Scanned ${data.library_path || "library"}`;
-        libraryEmpty.classList.remove("hidden");
-        return;
-      }
-
-      libraryEmpty.classList.add("hidden");
-      librarySubtitle.textContent = `${series.length} series found in ${data.library_path}`;
-
-      series.forEach((s) => {
-        const card = document.createElement("div");
-        card.className = "series-card";
-        card.setAttribute("role", "button");
-        card.setAttribute("tabindex", "0");
-
-        const coverHtml = s.has_cover && s.cover_url
-          ? `<div class="series-cover-wrapper">
-               <img class="series-cover-img" src="${s.cover_url}" alt="${escapeHtml(s.name)} cover" loading="lazy" />
-             </div>`
-          : `<div class="series-cover-wrapper series-cover-placeholder">
-               <svg class="placeholder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                 <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
-                 <path d="M6 6h10"/>
-                 <path d="M6 10h10"/>
-               </svg>
-             </div>`;
-
-        card.innerHTML = `
-          ${coverHtml}
-          <div class="series-card-content">
-            <div class="series-card-title" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
-            <div class="series-card-footer">
-              <span class="badge">${s.chapter_count} ${s.chapter_count === 1 ? "chapter" : "chapters"}</span>
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" class="chapter-arrow">
-                <path d="M9 18l6-6-6-6"/>
-              </svg>
-            </div>
-          </div>
-        `;
-
-        // Handle image loading errors gracefully without broken image icon
-        const coverImg = card.querySelector(".series-cover-img");
-        if (coverImg) {
-          coverImg.addEventListener("error", () => {
-            const wrapper = card.querySelector(".series-cover-wrapper");
-            if (wrapper) {
-              wrapper.className = "series-cover-wrapper series-cover-placeholder";
-              wrapper.innerHTML = `
-                <svg class="placeholder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
-                  <path d="M6 6h10"/>
-                  <path d="M6 10h10"/>
-                </svg>
-              `;
-            }
-          });
-        }
-
-        card.addEventListener("click", () => {
-          window.location.hash = `#/series/${encodeURIComponent(s.name)}`;
-        });
-
-        seriesGrid.appendChild(card);
-      });
+      allSeriesList = data.series || [];
+      renderLibrarySeries();
     } catch (err) {
       showError(`Failed to load library: ${err.message}`);
       librarySubtitle.textContent = "Could not connect to the backend server.";
     }
+  }
+
+  function renderLibrarySeries() {
+    seriesGrid.innerHTML = "";
+
+    if (allSeriesList.length === 0) {
+      librarySubtitle.textContent = "0 series";
+      libraryEmpty.classList.remove("hidden");
+      if (libraryNoResults) libraryNoResults.classList.add("hidden");
+      return;
+    }
+
+    libraryEmpty.classList.add("hidden");
+
+    // Local filter by search query
+    let filtered = allSeriesList;
+    const query = librarySearchQuery.trim().toLowerCase();
+    if (query) {
+      filtered = allSeriesList.filter((s) => s.name.toLowerCase().includes(query));
+    }
+
+    // Local sort
+    filtered = [...filtered].sort((a, b) => {
+      if (librarySortMode === "za") {
+        return b.name.localeCompare(a.name, undefined, { numeric: true, sensitivity: "base" });
+      } else if (librarySortMode === "chapters") {
+        return (b.chapter_count || 0) - (a.chapter_count || 0);
+      } else {
+        // "az" (default)
+        return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+      }
+    });
+
+    // Update metadata subtitle: quiet, natural casing (e.g. "12 series")
+    const totalCount = allSeriesList.length;
+    if (query) {
+      librarySubtitle.textContent = `${filtered.length} of ${totalCount} ${totalCount === 1 ? "series" : "series"}`;
+    } else {
+      librarySubtitle.textContent = `${totalCount} ${totalCount === 1 ? "series" : "series"}`;
+    }
+
+    // Show/hide no results state
+    if (filtered.length === 0 && query) {
+      if (libraryNoResults) {
+        libraryNoResults.classList.remove("hidden");
+        const querySpan = document.getElementById("no-results-query");
+        if (querySpan) querySpan.textContent = librarySearchQuery;
+      }
+      return;
+    }
+
+    if (libraryNoResults) libraryNoResults.classList.add("hidden");
+
+    // Render series cards
+    filtered.forEach((s) => {
+      const card = document.createElement("div");
+      card.className = "series-card";
+      card.setAttribute("role", "button");
+      card.setAttribute("tabindex", "0");
+
+      const coverHtml = s.has_cover && s.cover_url
+        ? `<div class="series-cover-wrapper">
+             <img class="series-cover-img" src="${s.cover_url}" alt="${escapeHtml(s.name)} cover" loading="lazy" />
+           </div>`
+        : `<div class="series-cover-wrapper series-cover-placeholder">
+             <svg class="placeholder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+               <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+               <path d="M6 6h10"/>
+               <path d="M6 10h10"/>
+             </svg>
+           </div>`;
+
+      card.innerHTML = `
+        ${coverHtml}
+        <div class="series-card-content">
+          <div class="series-card-title" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
+          <div class="series-card-footer">
+            <span class="series-card-count">${s.chapter_count} ${s.chapter_count === 1 ? "chapter" : "chapters"}</span>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" class="chapter-arrow">
+              <path d="M9 18l6-6-6-6"/>
+            </svg>
+          </div>
+        </div>
+      `;
+
+      // Handle image loading errors gracefully without broken image icon
+      const coverImg = card.querySelector(".series-cover-img");
+      if (coverImg) {
+        coverImg.addEventListener("error", () => {
+          const wrapper = card.querySelector(".series-cover-wrapper");
+          if (wrapper) {
+            wrapper.className = "series-cover-wrapper series-cover-placeholder";
+            wrapper.innerHTML = `
+              <svg class="placeholder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+                <path d="M6 6h10"/>
+                <path d="M6 10h10"/>
+              </svg>
+            `;
+          }
+        });
+      }
+
+      card.addEventListener("click", () => {
+        window.location.hash = `#/series/${encodeURIComponent(s.name)}`;
+      });
+
+      card.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          window.location.hash = `#/series/${encodeURIComponent(s.name)}`;
+        }
+      });
+
+      seriesGrid.appendChild(card);
+    });
   }
 
   // 2. Load Chapters View (shows Bookmarks and Reading Progress)
@@ -640,10 +676,10 @@ document.addEventListener("DOMContentLoaded", () => {
     chaptersList.innerHTML = "";
     chaptersEmpty.classList.add("hidden");
 
-    updateBreadcrumbs([
-      { label: "Library", href: "#/" },
-      { label: seriesName }
-    ]);
+    if (headerSeriesTitle) {
+      headerSeriesTitle.textContent = seriesName;
+      headerSeriesTitle.title = `Scroll ${seriesName} to top`;
+    }
 
     if (seriesHeroBackdrop) {
       const bgUrl = `/api/background?series=${encodeURIComponent(seriesName)}`;
@@ -700,7 +736,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const bookmarkCount = currentSeriesBookmarks.size;
       const countText = `${chapters.length} ${chapters.length === 1 ? "chapter" : "chapters"}`;
-      seriesMeta.textContent = bookmarkCount > 0 ? `${countText} • ${bookmarkCount} bookmarked` : countText;
+      seriesMeta.textContent = bookmarkCount > 0 ? `${countText} · ${bookmarkCount} bookmarked` : countText;
 
       chapters.forEach((ch) => {
         const item = document.createElement("div");
@@ -776,12 +812,6 @@ document.addEventListener("DOMContentLoaded", () => {
       saveProgressTimeout = null;
     }
     currentVisibleImage = null;
-
-    updateBreadcrumbs([
-      { label: "Library", href: "#/" },
-      { label: seriesName, href: `#/series/${encodeURIComponent(seriesName)}` },
-      { label: chapterName }
-    ]);
 
     try {
       const [imagesRes, readerData, chaptersData] = await Promise.all([
@@ -995,12 +1025,54 @@ document.addEventListener("DOMContentLoaded", () => {
   // Event Listeners
   window.addEventListener("hashchange", handleRoute);
 
-  btnRefresh.addEventListener("click", () => {
-    handleRoute();
-  });
+  if (headerSeriesTitle) {
+    headerSeriesTitle.addEventListener("click", () => {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  }
 
-  if (btnBackToLibrary) {
-    btnBackToLibrary.addEventListener("click", () => {
+  // Library Search & Sort Controls
+  if (librarySearch) {
+    librarySearch.addEventListener("input", (e) => {
+      librarySearchQuery = e.target.value;
+      if (librarySearchClear) {
+        librarySearchClear.classList.toggle("hidden", !librarySearchQuery);
+      }
+      renderLibrarySeries();
+    });
+
+    librarySearch.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        librarySearch.value = "";
+        librarySearchQuery = "";
+        if (librarySearchClear) librarySearchClear.classList.add("hidden");
+        renderLibrarySeries();
+        librarySearch.blur();
+      }
+    });
+  }
+
+  if (librarySearchClear) {
+    librarySearchClear.addEventListener("click", () => {
+      if (librarySearch) {
+        librarySearch.value = "";
+        librarySearch.focus();
+      }
+      librarySearchQuery = "";
+      librarySearchClear.classList.add("hidden");
+      renderLibrarySeries();
+    });
+  }
+
+  if (librarySort) {
+    librarySort.addEventListener("change", (e) => {
+      librarySortMode = e.target.value;
+      renderLibrarySeries();
+    });
+  }
+
+  if (headerBackLink) {
+    headerBackLink.addEventListener("click", () => {
       window.location.hash = "#/";
     });
   }
