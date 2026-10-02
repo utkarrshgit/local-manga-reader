@@ -68,6 +68,12 @@
                 <option value="chapters">Chapters</option>
               </select>
             </div>
+            <button type="button" id="btn-change-folder" class="btn-change-folder" title="Change manga library folder" aria-label="Change manga folder">
+              <svg class="folder-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+              </svg>
+              <span>Change folder</span>
+            </button>
           </div>
         </div>
       </div>
@@ -88,6 +94,21 @@
         </svg>
         <h3>No Manga Found</h3>
         <p>No series folders were found in your library folder. Add folders containing chapters and images to your manga directory, then refresh.</p>
+      </div>
+
+      <!-- Unavailable Library Folder State -->
+      <div id="library-unavailable" class="empty-state hidden">
+        <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <h3>Manga Folder Unavailable</h3>
+        <p class="unavailable-path" id="unavailable-folder-path"></p>
+        <p class="unavailable-desc">The configured manga folder could not be found. It may have been moved, renamed, or disconnected.</p>
+        <button type="button" id="btn-reconnect-folder" class="btn-reconnect-folder">
+          <span>Choose another folder</span>
+        </button>
       </div>
     </section>
 

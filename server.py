@@ -9,6 +9,7 @@ import json
 import mimetypes
 import os
 import re
+import subprocess
 import sys
 from http import HTTPStatus
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -16,7 +17,88 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote, quote
 
 DEFAULT_PORT = 8000
-DEFAULT_LIBRARY_DIR = os.path.expanduser("~/Manga")
+
+
+def get_config_file_path() -> Path:
+    """Returns path to the library path config file outside the git repository."""
+    if os.environ.get("LOCAL_MANGA_CONFIG_FILE"):
+        return Path(os.environ["LOCAL_MANGA_CONFIG_FILE"])
+    config_dir = os.environ.get(
+        "LOCAL_MANGA_CONFIG_DIR",
+        os.path.expanduser("~/Library/Application Support/LocalMangaReader")
+    )
+    return Path(config_dir) / "library_path"
+
+
+def save_library_path_config(path_str: str) -> None:
+    """Saves configured manga library directory to config file."""
+    config_file = get_config_file_path()
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(path_str.strip() + "\n", encoding="utf-8")
+
+
+def load_saved_library_path() -> str | None:
+    """Loads saved manga library directory from config file if available."""
+    config_file = get_config_file_path()
+    if config_file.is_file():
+        try:
+            content = config_file.read_text(encoding="utf-8").strip()
+            if content:
+                return content
+        except Exception:
+            pass
+    return None
+
+
+def get_default_library_dir() -> str:
+    """Resolves default library path via env override, saved config, or fallback."""
+    if os.environ.get("MANGA_DIR"):
+        return os.environ["MANGA_DIR"]
+    saved = load_saved_library_path()
+    if saved:
+        return saved
+    return os.path.expanduser("~/Manga")
+
+
+DEFAULT_LIBRARY_DIR = get_default_library_dir()
+
+
+def choose_folder_native(prompt: str = "Select your Manga library folder:") -> str | None:
+    """
+    Prompts user with macOS native folder selection dialog via osascript.
+    Supports MOCK_FOLDER_PICKER_RESULT environment variable for automated testing.
+    """
+    if "MOCK_FOLDER_PICKER_RESULT" in os.environ:
+        val = os.environ["MOCK_FOLDER_PICKER_RESULT"].strip()
+        return val if val else None
+
+    script = f'''
+    tell application "System Events"
+        activate
+    end tell
+    try
+        set selectedFolder to choose folder with prompt "{prompt}"
+        return POSIX path of selectedFolder
+    on error number -128
+        return ""
+    end try
+    '''
+    try:
+        proc = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        if proc.returncode == 0:
+            chosen = proc.stdout.strip()
+            if chosen and chosen != "/":
+                chosen = chosen.rstrip("/")
+            return chosen if chosen else None
+        return None
+    except Exception:
+        return None
+
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg"}
 
@@ -597,11 +679,21 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
             vals = query.get(name)
             return vals[0] if vals else None
 
+        # 0. API: Get active library info (/api/library)
+        if path == "/api/library":
+            self._send_json({
+                "library_path": str(self.library.root_path),
+                "library_exists": self.library.exists(),
+                "series_count": len(self.library.list_series()) if self.library.exists() else 0
+            })
+            return
+
         # 1. API: List all series
         if path == "/api/series":
             series = self.library.list_series()
             self._send_json({
                 "library_path": str(self.library.root_path),
+                "library_exists": self.library.exists(),
                 "series_count": len(series),
                 "series": series
             })
@@ -1181,6 +1273,56 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 "success": True,
                 "series": series_name,
                 "background_url": f"/api/background?series={quote(series_name)}"
+            })
+            return
+
+        # 6. API: Change manga library directory (/api/library)
+        if path == "/api/library":
+            body = self._read_json_body()
+            if not body:
+                self._send_error("Invalid or missing JSON body", HTTPStatus.BAD_REQUEST)
+                return
+
+            action = body.get("action")
+            target_path_str = None
+
+            if action == "select":
+                chosen = choose_folder_native("Select your Manga library folder:")
+                if not chosen:
+                    self._send_json({
+                        "success": False,
+                        "cancelled": True,
+                        "message": "Folder selection cancelled by user"
+                    })
+                    return
+                target_path_str = chosen
+            elif "path" in body:
+                raw_path = body.get("path")
+                if not isinstance(raw_path, str) or not raw_path.strip():
+                    self._send_error("Field 'path' must be a non-empty string", HTTPStatus.BAD_REQUEST)
+                    return
+                target_path_str = raw_path.strip()
+            else:
+                self._send_error("Missing required field: 'action' or 'path'", HTTPStatus.BAD_REQUEST)
+                return
+
+            resolved_path = Path(target_path_str).expanduser().resolve()
+            if not resolved_path.exists() or not resolved_path.is_dir():
+                self._send_error(f"Selected path is not an existing directory: {resolved_path}", HTTPStatus.BAD_REQUEST)
+                return
+
+            # Update library in memory for all subsequent requests
+            new_lib = MangaLibrary(str(resolved_path))
+            MangaRequestHandler.library = new_lib
+
+            # Persist to configuration file outside git repository
+            save_library_path_config(str(resolved_path))
+
+            self._send_json({
+                "success": True,
+                "library_path": str(resolved_path),
+                "library_exists": True,
+                "series_count": len(new_lib.list_series())
             })
             return
 

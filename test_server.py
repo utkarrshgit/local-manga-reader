@@ -3,6 +3,9 @@ from pathlib import Path
 import tempfile
 import shutil
 import json
+import os
+import subprocess
+import time
 from server import MangaLibrary, natural_sort_key
 
 
@@ -463,6 +466,7 @@ class TestPhase6Features(unittest.TestCase):
         self.temp_dir = tempfile.mkdtemp()
         self.lib_path = Path(self.temp_dir).resolve()
         self.library = MangaLibrary(str(self.lib_path))
+        self.MangaRequestHandler.library = self.library
 
     def tearDown(self):
         shutil.rmtree(self.temp_dir)
@@ -482,9 +486,10 @@ class TestPhase6Features(unittest.TestCase):
                 finally:
                     self.finish()
 
-        CustomHandler.library = self.library
+        CustomHandler.library = getattr(self.MangaRequestHandler, "library", self.library)
         CustomHandler.static_dir = Path(__file__).parent / "static"
         CustomHandler(sock, ("127.0.0.1", 8000), None)
+        self.library = CustomHandler.library
 
         output = sock.wfile.getvalue()
         parts = output.split(b"\r\n\r\n", 1)
@@ -513,9 +518,10 @@ class TestPhase6Features(unittest.TestCase):
                 finally:
                     self.finish()
 
-        CustomHandler.library = self.library
+        CustomHandler.library = getattr(self.MangaRequestHandler, "library", self.library)
         CustomHandler.static_dir = Path(__file__).parent / "static"
         CustomHandler(sock, ("127.0.0.1", 8000), None)
+        self.library = CustomHandler.library
 
         output = sock.wfile.getvalue()
         parts = output.split(b"\r\n\r\n", 1)
@@ -1335,6 +1341,328 @@ class TestPhase6Features(unittest.TestCase):
         self.assertIn(".series-cover-column", css_str)
         self.assertIn("flex-direction: column", css_str)
 
+    def test_get_library_endpoint(self):
+        """35. GET /api/library returns current library path, exists status, and series count."""
+        headers, body = self._simulate_get("/api/library")
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(data["library_path"], str(self.lib_path.resolve()))
+        self.assertTrue(data["library_exists"])
+        self.assertIsInstance(data["series_count"], int)
+
+    def test_change_library_by_path_and_persist(self):
+        """36. POST /api/library with valid path updates active library and saves config file."""
+        with tempfile.TemporaryDirectory() as new_lib_dir, tempfile.TemporaryDirectory() as new_conf_dir:
+            conf_file = os.path.join(new_conf_dir, "library_path")
+            os.environ["LOCAL_MANGA_CONFIG_FILE"] = conf_file
+
+            # Create a sample series in new library
+            series_path = Path(new_lib_dir) / "OnePiece"
+            series_path.mkdir(parents=True)
+            ch1 = series_path / "Chapter 1"
+            ch1.mkdir()
+            (ch1 / "1.jpg").write_bytes(b"DATA")
+
+            headers, body = self._simulate_post("/api/library", {"path": new_lib_dir})
+            self.assertIn("200 OK", headers)
+            res = json.loads(body.decode("utf-8"))
+            self.assertTrue(res["success"])
+            self.assertEqual(res["library_path"], str(Path(new_lib_dir).resolve()))
+            self.assertTrue(res["library_exists"])
+            self.assertEqual(res["series_count"], 1)
+
+            # Check config file was written
+            self.assertTrue(os.path.isfile(conf_file))
+            with open(conf_file) as f:
+                saved = f.read().strip()
+            self.assertEqual(saved, str(Path(new_lib_dir).resolve()))
+
+            # Check GET /api/series returns the new series
+            _, s_body = self._simulate_get("/api/series")
+            s_data = json.loads(s_body.decode("utf-8"))
+            self.assertEqual(s_data["series_count"], 1)
+            self.assertEqual(s_data["series"][0]["name"], "OnePiece")
+
+            # Restore original library for remaining tests
+            self.MangaRequestHandler.library = self.library
+            os.environ.pop("LOCAL_MANGA_CONFIG_FILE", None)
+
+    def test_change_library_by_native_select_and_cancellation(self):
+        """37. POST /api/library with action='select' handles selection and cancellation."""
+        with tempfile.TemporaryDirectory() as new_lib_dir, tempfile.TemporaryDirectory() as new_conf_dir:
+            conf_file = os.path.join(new_conf_dir, "library_path")
+            os.environ["LOCAL_MANGA_CONFIG_FILE"] = conf_file
+
+            # Test selection via mock
+            os.environ["MOCK_FOLDER_PICKER_RESULT"] = new_lib_dir
+            headers, body = self._simulate_post("/api/library", {"action": "select"})
+            self.assertIn("200 OK", headers)
+            res = json.loads(body.decode("utf-8"))
+            self.assertTrue(res["success"])
+            self.assertEqual(res["library_path"], str(Path(new_lib_dir).resolve()))
+
+            # Test cancellation
+            os.environ["MOCK_FOLDER_PICKER_RESULT"] = ""
+            headers2, body2 = self._simulate_post("/api/library", {"action": "select"})
+            self.assertIn("200 OK", headers2)
+            res2 = json.loads(body2.decode("utf-8"))
+            self.assertFalse(res2["success"])
+            self.assertTrue(res2["cancelled"])
+
+            # Clean up env
+            os.environ.pop("MOCK_FOLDER_PICKER_RESULT", None)
+            os.environ.pop("LOCAL_MANGA_CONFIG_FILE", None)
+            self.MangaRequestHandler.library = self.library
+
+    def test_change_library_validation_errors(self):
+        """38. POST /api/library rejects nonexistent paths, non-directories, and invalid payloads."""
+        # Nonexistent path
+        headers1, _ = self._simulate_post("/api/library", {"path": "/path/to/nonexistent/manga_999"})
+        self.assertIn("400", headers1)
+
+        # Path is a file, not a directory
+        with tempfile.NamedTemporaryFile() as tf:
+            headers2, _ = self._simulate_post("/api/library", {"path": tf.name})
+            self.assertIn("400", headers2)
+
+        # Missing path or action
+        headers3, _ = self._simulate_post("/api/library", {"foo": "bar"})
+        self.assertIn("400", headers3)
+
+        # Empty path
+        headers4, _ = self._simulate_post("/api/library", {"path": "   "})
+        self.assertIn("400", headers4)
+
+    def test_missing_configured_directory_reporting(self):
+        """39. Missing configured library directory reports library_exists=False without crashing."""
+        deleted_dir = tempfile.mkdtemp()
+        shutil.rmtree(deleted_dir)
+
+        orig_lib = self.MangaRequestHandler.library
+        self.MangaRequestHandler.library = MangaLibrary(deleted_dir)
+        try:
+            # GET /api/library
+            _, lib_body = self._simulate_get("/api/library")
+            lib_data = json.loads(lib_body.decode("utf-8"))
+            self.assertFalse(lib_data["library_exists"])
+            self.assertEqual(lib_data["series_count"], 0)
+
+            # GET /api/series
+            _, s_body = self._simulate_get("/api/series")
+            s_data = json.loads(s_body.decode("utf-8"))
+            self.assertFalse(s_data["library_exists"])
+            self.assertEqual(s_data["series_count"], 0)
+            self.assertEqual(s_data["series"], [])
+        finally:
+            self.MangaRequestHandler.library = orig_lib
+
+    def test_switching_libraries_preserves_reader_data(self):
+        """40. Switching between libraries does NOT alter or delete existing reader_data.json."""
+        with tempfile.TemporaryDirectory() as lib1, tempfile.TemporaryDirectory() as lib2:
+            s1 = Path(lib1) / "Series1"
+            s1.mkdir()
+            (s1 / "Chapter 1").mkdir()
+            ((s1 / "Chapter 1") / "1.jpg").write_bytes(b"IMG")
+
+            s2 = Path(lib2) / "Series2"
+            s2.mkdir()
+            (s2 / "Chapter 1").mkdir()
+            ((s2 / "Chapter 1") / "1.jpg").write_bytes(b"IMG")
+
+            # Set progress in Library 1
+            l1 = MangaLibrary(lib1)
+            l1.update_progress("Series1", "Chapter 1", "1.jpg")
+            l1.toggle_bookmark("Series1", "Chapter 1", True)
+
+            # Switch to Library 2
+            self.MangaRequestHandler.library = MangaLibrary(lib2)
+            _, body2 = self._simulate_get("/api/series")
+            s2_data = json.loads(body2.decode("utf-8"))
+            self.assertEqual(s2_data["series"][0]["name"], "Series2")
+
+            # Switch back to Library 1
+            self.MangaRequestHandler.library = l1
+            data1 = l1.get_reader_data("Series1")
+            self.assertEqual(data1["progress"], {"Chapter 1": "1.jpg"})
+            self.assertEqual(data1["bookmarks"], ["Chapter 1"])
+
+            self.MangaRequestHandler.library = self.library
+
+    def test_change_folder_ui_elements(self):
+        """41. UI contains Change folder button and unavailable state elements."""
+        _, html_body = self._simulate_get("/")
+        html_str = html_body.decode("utf-8")
+        self.assertIn('id="btn-change-folder"', html_str)
+        self.assertIn('id="library-unavailable"', html_str)
+        self.assertIn('id="unavailable-folder-path"', html_str)
+        self.assertIn('id="btn-reconnect-folder"', html_str)
+
+        _, css_body = self._simulate_get("/style.css")
+        css_str = css_body.decode("utf-8")
+        self.assertIn(".btn-change-folder", css_str)
+        self.assertIn("#library-unavailable", css_str)
+        self.assertIn(".unavailable-path", css_str)
+        self.assertIn(".btn-reconnect-folder", css_str)
+
+        _, js_body = self._simulate_get("/app.js")
+        js_str = js_body.decode("utf-8")
+        self.assertIn("changeMangaFolder", js_str)
+        self.assertIn("btnChangeFolder", js_str)
+        self.assertIn("libraryUnavailable", js_str)
+        self.assertIn("btnReconnectFolder", js_str)
+
+
+class TestMacOSLauncher(unittest.TestCase):
+    def setUp(self):
+        self.project_dir = Path(__file__).parent.resolve()
+        self.launcher_path = self.project_dir / "start-mac.command"
+
+    def test_launcher_attributes_and_no_hardcoded_paths(self):
+        """Verify start-mac.command existence, executable permissions, and no hardcoded personal paths."""
+        self.assertTrue(self.launcher_path.exists(), "start-mac.command does not exist")
+        self.assertTrue(os.access(self.launcher_path, os.X_OK), "start-mac.command is not executable")
+
+        content = self.launcher_path.read_text(encoding="utf-8")
+        # Must not contain user's personal absolute paths
+        self.assertNotIn("/Users/utkarshjaiswal", content)
+        # Must not default to <project>/Manga
+        self.assertNotIn('"$PROJECT_DIR/Manga"', content)
+        self.assertNotIn("PROJECT_DIR/Manga", content)
+        # Must reference osascript for native folder selection
+        self.assertIn("osascript", content)
+        self.assertIn("choose folder", content)
+
+    def test_launcher_configuration_lifecycle(self):
+        """Test first launch, config persistence, missing folder handling, and MANGA_DIR override."""
+        with tempfile.TemporaryDirectory() as base_tmp:
+            config_dir = os.path.join(base_tmp, "config")
+            config_file = os.path.join(config_dir, "library_path")
+            lib1 = os.path.join(base_tmp, "library1")
+            lib2 = os.path.join(base_tmp, "library2")
+            os.makedirs(lib1)
+            os.makedirs(lib2)
+
+            mock_bin = os.path.join(base_tmp, "mock_bin")
+            os.makedirs(mock_bin)
+
+            open_log = os.path.join(base_tmp, "open.log")
+            with open(os.path.join(mock_bin, "open"), "w") as f:
+                f.write(f'#!/bin/sh\necho "$@" >> {open_log}\n')
+            os.chmod(os.path.join(mock_bin, "open"), 0o755)
+
+            # Mock curl to simulate immediate server readiness
+            with open(os.path.join(mock_bin, "curl"), "w") as f:
+                f.write("#!/bin/sh\nexit 0\n")
+            os.chmod(os.path.join(mock_bin, "curl"), 0o755)
+
+            # Mock python3 to act as server.py
+            server_log = os.path.join(base_tmp, "server.log")
+            with open(os.path.join(mock_bin, "python3"), "w") as f:
+                f.write(f"""#!/bin/sh
+if [ "$1" = "server.py" ]; then
+    echo "SERVER STARTED: $@" >> {server_log}
+    trap "echo SERVER_SHUTDOWN >> {server_log}; exit 0" INT TERM
+    while true; do sleep 0.1; done
+else
+    exec /usr/bin/python3 "$@"
+fi
+""")
+            os.chmod(os.path.join(mock_bin, "python3"), 0o755)
+
+            base_env = dict(os.environ)
+            base_env.pop("MANGA_DIR", None)
+            base_env["LOCAL_MANGA_CONFIG_DIR"] = config_dir
+            base_env["PATH"] = mock_bin + ":" + base_env.get("PATH", "")
+
+            # 1. First launch with no configuration
+            env1 = dict(base_env)
+            env1["MOCK_FOLDER_PICKER_RESULT"] = lib1 + "/"
+            p1 = subprocess.Popen([str(self.launcher_path)], env=env1, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            time.sleep(0.4)
+            p1.terminate()
+            p1.wait(timeout=3)
+            p1.stdout.close()
+            p1.stderr.close()
+
+            self.assertTrue(os.path.exists(config_file), "Config file was not created on first launch")
+            with open(config_file) as f:
+                saved = f.read().strip()
+            self.assertEqual(saved, lib1)
+            with open(open_log) as f:
+                self.assertIn("-a Safari http://localhost:8000", f.read())
+            with open(server_log) as f:
+                slog = f.read()
+                self.assertIn(f"--dir {lib1}", slog)
+                self.assertIn("SERVER_SHUTDOWN", slog)
+
+            # 2. Subsequent launch with saved configuration (does not re-pick)
+            os.remove(open_log)
+            os.remove(server_log)
+            env2 = dict(base_env)
+            env2["MOCK_FOLDER_PICKER_RESULT"] = "/should/not/be/used"
+            p2 = subprocess.Popen([str(self.launcher_path)], env=env2, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            time.sleep(0.4)
+            p2.terminate()
+            p2.wait(timeout=3)
+            p2.stdout.close()
+            p2.stderr.close()
+
+            with open(config_file) as f:
+                self.assertEqual(f.read().strip(), lib1)
+            with open(server_log) as f:
+                self.assertIn(f"--dir {lib1}", f.read())
+
+            # 3. Missing/deleted configured folder prompts picker again and updates config
+            os.remove(open_log)
+            os.remove(server_log)
+            shutil.rmtree(lib1)
+            env3 = dict(base_env)
+            env3["MOCK_FOLDER_PICKER_RESULT"] = lib2
+            p3 = subprocess.Popen([str(self.launcher_path)], env=env3, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            time.sleep(0.4)
+            p3.terminate()
+            p3.wait(timeout=3)
+            p3.stdout.close()
+            p3.stderr.close()
+
+            with open(config_file) as f:
+                self.assertEqual(f.read().strip(), lib2)
+            with open(server_log) as f:
+                self.assertIn(f"--dir {lib2}", f.read())
+
+            # 4. External manga directory via MANGA_DIR environment variable
+            os.remove(open_log)
+            os.remove(server_log)
+            ext_lib = os.path.join(base_tmp, "ext_manga")
+            os.makedirs(ext_lib)
+            env4 = dict(base_env)
+            env4["MANGA_DIR"] = ext_lib
+            p4 = subprocess.Popen([str(self.launcher_path)], env=env4, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            time.sleep(0.4)
+            p4.terminate()
+            p4.wait(timeout=3)
+            p4.stdout.close()
+            p4.stderr.close()
+
+            with open(config_file) as f:
+                self.assertEqual(f.read().strip(), lib2, "MANGA_DIR should not overwrite config file")
+            with open(server_log) as f:
+                self.assertIn(f"--dir {ext_lib}", f.read())
+
+            # 5. Invalid MANGA_DIR shows clear error and exits with 1
+            env5 = dict(base_env)
+            env5["MANGA_DIR"] = "/nonexistent/manga_dir_test_404"
+            r5 = subprocess.run([str(self.launcher_path)], env=env5, capture_output=True, text=True, input="")
+            self.assertEqual(r5.returncode, 1)
+            self.assertIn("[ERROR] Specified MANGA_DIR does not exist!", r5.stdout)
+
+            # 6. User cancellation on initial launch exits cleanly
+            os.remove(config_file)
+            env6 = dict(base_env)
+            env6["MOCK_FOLDER_PICKER_RESULT"] = ""
+            r6 = subprocess.run([str(self.launcher_path)], env=env6, capture_output=True, text=True, input="")
+            self.assertEqual(r6.returncode, 0)
+            self.assertIn("No manga library folder selected.", r6.stdout)
 
 
 if __name__ == "__main__":

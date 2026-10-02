@@ -16,6 +16,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const librarySearchClear = document.getElementById("library-search-clear");
   const librarySort = document.getElementById("library-sort");
   const libraryNoResults = document.getElementById("library-no-results");
+  const btnChangeFolder = document.getElementById("btn-change-folder");
+  const libraryUnavailable = document.getElementById("library-unavailable");
+  const unavailableFolderPath = document.getElementById("unavailable-folder-path");
+  const btnReconnectFolder = document.getElementById("btn-reconnect-folder");
 
   // DOM Elements - Chapters & Metadata
   const chaptersList = document.getElementById("chapters-list");
@@ -259,6 +263,17 @@ document.addEventListener("DOMContentLoaded", () => {
     statusBanner.classList.remove("hidden");
   }
 
+  function showSuccess(message, duration = 3500) {
+    statusBanner.textContent = message;
+    statusBanner.className = "status-banner success";
+    statusBanner.classList.remove("hidden");
+    if (duration > 0) {
+      setTimeout(() => {
+        statusBanner.classList.add("hidden");
+      }, duration);
+    }
+  }
+
   function clearError() {
     statusBanner.textContent = "";
     statusBanner.classList.add("hidden");
@@ -342,6 +357,12 @@ document.addEventListener("DOMContentLoaded", () => {
     viewLibrary.classList.toggle("hidden", viewName !== "library");
     viewChapters.classList.toggle("hidden", viewName !== "chapters");
     viewReader.classList.toggle("hidden", viewName !== "reader");
+
+    if (viewName !== "library") {
+      if (libraryUnavailable) {
+        libraryUnavailable.classList.add("hidden");
+      }
+    }
 
     if (viewName !== "reader") {
       readerLoading.classList.add("hidden");
@@ -699,6 +720,46 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // Action: Change Manga Library Directory
+  async function changeMangaFolder() {
+    if (btnChangeFolder) btnChangeFolder.disabled = true;
+    if (btnReconnectFolder) btnReconnectFolder.disabled = true;
+
+    try {
+      const res = await fetch("/api/library", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "select" })
+      });
+
+      if (!res.ok) {
+        let errMsg = `Failed to change folder (${res.status})`;
+        try {
+          const errJson = await res.json();
+          if (errJson && errJson.error) errMsg = errJson.error;
+        } catch {}
+        showError(errMsg);
+        return;
+      }
+
+      const data = await res.json();
+      if (data.cancelled) {
+        // User closed/cancelled folder picker
+        return;
+      }
+
+      if (data.success) {
+        showSuccess(`Manga folder updated: ${data.library_path}`);
+        await loadLibrary();
+      }
+    } catch (err) {
+      showError(`Error changing manga folder: ${err.message}`);
+    } finally {
+      if (btnChangeFolder) btnChangeFolder.disabled = false;
+      if (btnReconnectFolder) btnReconnectFolder.disabled = false;
+    }
+  }
+
   // 1. Load Library View
   async function loadLibrary() {
     switchView("library");
@@ -708,6 +769,26 @@ document.addEventListener("DOMContentLoaded", () => {
       const res = await fetch("/api/series");
       if (!res.ok) throw new Error(`HTTP error ${res.status}`);
       const data = await res.json();
+
+      // Check if configured library directory exists
+      if (data.library_exists === false) {
+        allSeriesList = [];
+        seriesGrid.innerHTML = "";
+        libraryEmpty.classList.add("hidden");
+        if (libraryNoResults) libraryNoResults.classList.add("hidden");
+        if (libraryUnavailable) {
+          libraryUnavailable.classList.remove("hidden");
+          if (unavailableFolderPath) {
+            unavailableFolderPath.textContent = data.library_path || "Unknown path";
+          }
+        }
+        librarySubtitle.textContent = "Folder unavailable";
+        return;
+      }
+
+      if (libraryUnavailable) {
+        libraryUnavailable.classList.add("hidden");
+      }
 
       allSeriesList = data.series || [];
 
@@ -1835,6 +1916,14 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   });
+
+  // Change library folder buttons
+  if (btnChangeFolder) {
+    btnChangeFolder.addEventListener("click", changeMangaFolder);
+  }
+  if (btnReconnectFolder) {
+    btnReconnectFolder.addEventListener("click", changeMangaFolder);
+  }
 
   // Initial load
   handleRoute();
