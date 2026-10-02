@@ -1,3 +1,45 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Testing and code quality caches / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# macOS and OS system files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+
+# Editor and IDE configurations / swap files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Manga library and reader metadata (library must remain outside repo)
+[Mm]anga/
+[Ll]ibrary/
+.reader/
+reader_data.json
+*.cbz
+*.cbr
