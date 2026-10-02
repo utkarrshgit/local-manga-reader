@@ -1,35 +1,34 @@
 # { index }
 
-A fast, lightweight local manga and manhwa reader that runs entirely in your web browser.
+A local manga and manhwa reader that runs in your web browser.
+
+![anime gif](https://i.pinimg.com/originals/1a/71/58/1a7158689e5ce37e5d78d97c332a003f.gif)
 
 ## Features
 
-- **Vertical reading**: Smooth, continuous vertical scroll experience.
-- **Manga & manhwa reading modes**: Switch between seamless webtoon view and single-page framed view.
-- **Reading progress**: Automatically remembers current chapter, page, and reading completion.
-- **Bookmarks**: Save favorite pages and jump back to them anytime.
-- **Series covers and metadata**: Manage cover images, background art, summaries, author details, and external links.
-- **Persistent library folder**: Remembers your configured manga folder across sessions.
-
-## Requirements
-
-- **Python 3**
-- **Modern web browser** (Safari, Chrome, Firefox, Edge, etc.)
-- **No external Python packages required** (uses only the standard library)
+- Vertical scrolling reader
+- Manga and manhwa reading modes
+- Reading progress and resume
+- Chapter bookmarks
+- Series covers and backgrounds
+- Series metadata and external links
+- Persistent manga library selection
+- Keyboard shortcuts
+- Safari/mobile-friendly interface
 
 ## Quick Start
 
-Run the one-click launcher for your operating system:
+Start the launcher for your system:
 
-- **macOS**: Double-click `start-mac.command`
-- **Windows**: Double-click `start-windows.bat`
-- **Linux**: Run `./start-linux.sh`
+- **macOS**: `start-mac.command`
+- **Windows**: `start-windows.bat`
+- **Linux**: `start-linux.sh`
 
-On first launch, a native folder picker will prompt you to select your manga library folder. The selected folder is remembered for future launches and opens automatically in your default browser.
+On first launch, you will be prompted to select your manga library folder. Your folder selection is remembered for future launches.
 
 ## Manga Library Structure
 
-Your manga library can be stored anywhere on your computer and does not need to be inside the project folder. Organize your folders by series and chapter:
+Organize your library by series and chapter folders:
 
 ```text
 Manga/
@@ -45,21 +44,28 @@ Manga/
         └── 002.jpg
 ```
 
-Common image formats (`.jpg`, `.jpeg`, `.png`, `.webp`, etc.) and natural chapter numbering are supported automatically.
+Your manga library can be stored anywhere on your computer and does not need to be inside the project folder.
 
 ## Changing the Library Folder
 
-You can change your manga folder at any time. Click **Change manga folder** in the top navigation bar of the library page to select a different directory. The library will reload immediately.
+You can switch to another library at any time by clicking "Change Manga Folder" on the library page.
+
+## Reading
+
+- **Spaced mode**: Pages have gaps between them, suited for traditional manga.
+- **Seamless mode**: Pages form one continuous vertical strip, suited for webtoons and manhwa.
+- Reading progress is saved automatically as you scroll.
+- Bookmarks can be added while reading to quickly return to specific pages.
 
 ## Data & Privacy
 
-- **100% Local**: Runs completely on your computer with no telemetry or external network calls.
-- **Safe**: Manga files are never copied, moved, or deleted by the application.
-- **Portable**: Reading progress, bookmarks, and series metadata are stored locally in each series' `.reader` folder.
+- The app runs entirely on your local machine.
+- Your manga files are never copied, moved, or modified.
+- Reading progress, bookmarks, and series metadata are stored locally inside each series' `.reader` folder.
 
 ## Troubleshooting
 
-- **Python 3 not installed**: Ensure Python 3 is installed and accessible from your system command line.
-- **Launcher permission (macOS / Linux)**: If running the launcher fails with a permission error, make it executable in your terminal:
+- **Python 3 is not installed**: Install Python 3 and ensure it is available in your command line / PATH.
+- **Launcher permission (macOS / Linux)**: If running the script gives a permission error, make it executable:
   - macOS: `chmod +x start-mac.command`
   - Linux: `chmod +x start-linux.sh`
