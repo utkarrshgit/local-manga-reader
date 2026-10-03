@@ -1,8 +1,8 @@
+![anime gif](https://raw.githubusercontent.com/utkarrshgit/temp_media/refs/heads/main/local_manga_reader/intro.gif?token=GHSAT0AAAAAAEK4KANW4EC4YM3WUB5WHZQ22WAKZ6Q)
+
 # { index }
 
 A local manga and manhwa reader that runs in your web browser.
-
-![anime gif](https://i.pinimg.com/originals/1a/71/58/1a7158689e5ce37e5d78d97c332a003f.gif)
 
 ## Features
 
@@ -15,6 +15,16 @@ A local manga and manhwa reader that runs in your web browser.
 - Persistent manga library selection
 - Keyboard shortcuts
 - Safari/mobile-friendly interface
+
+## Preview
+
+![Library](https://raw.githubusercontent.com/utkarrshgit/temp_media/refs/heads/main/local_manga_reader/Screenshot%201.png?token=GHSAT0AAAAAAEK4KANX6U73QWB5VLVOB4HA2WAK2ZQ)
+
+![Series page](https://raw.githubusercontent.com/utkarrshgit/temp_media/refs/heads/main/local_manga_reader/Screenshot%202.png?token=GHSAT0AAAAAAEK4KANWG3N4W5CKGR4UZC342WAK3DQ)
+
+![Reader](https://raw.githubusercontent.com/utkarrshgit/temp_media/refs/heads/main/local_manga_reader/Screenshot%203.png?token=GHSAT0AAAAAAEK4KANX5ZPSNSY3SY3V2HMQ2WAK3JQ)
+
+![Reading demo](https://raw.githubusercontent.com/utkarrshgit/temp_media/refs/heads/main/local_manga_reader/demo.gif?token=GHSAT0AAAAAAEK4KANWU2SDDSTBO7GX75EA2WAK3QQ)
 
 ## Quick Start
 
