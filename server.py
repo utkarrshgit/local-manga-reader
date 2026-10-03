@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import zipfile
 from http import HTTPStatus
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
@@ -158,7 +159,35 @@ def choose_folder_native(prompt: str = "Select your Manga library folder:") -> s
         return None
 
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".bmp"}
+ARCHIVE_EXTENSIONS = {".cbz", ".zip"}
+
+EXTENSION_MIME_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".avif": "image/avif",
+    ".bmp": "image/bmp",
+}
+
+
+def is_safe_archive_member(name: str) -> bool:
+    """
+    Validates that an archive member name is safe and does not attempt path traversal.
+    """
+    if not name or not isinstance(name, str):
+        return False
+    clean = name.replace("\\", "/").strip()
+    if clean.startswith("/") or clean.startswith("\\"):
+        return False
+    if len(clean) > 1 and clean[1] == ":":
+        return False
+    parts = clean.split("/")
+    if any(part in ("..", ".") for part in parts):
+        return False
+    return True
 
 
 def natural_sort_key(text: str):
@@ -245,6 +274,66 @@ class MangaLibrary:
         except (ValueError, RuntimeError):
             return False
 
+    @staticmethod
+    def _list_archive_images(archive_path: Path) -> list[str]:
+        """
+        Safely lists all supported image files in a CBZ or ZIP archive.
+        Filters out directories, hidden/system files, unsupported extensions, and path traversal attempts.
+        Sorts image filenames naturally.
+        """
+        if not archive_path.is_file():
+            return []
+        try:
+            if not zipfile.is_zipfile(archive_path):
+                return []
+            with zipfile.ZipFile(archive_path, "r") as zf:
+                valid_images = []
+                for info in zf.infolist():
+                    if info.is_dir() or info.filename.endswith("/"):
+                        continue
+                    filename = info.filename
+                    if not is_safe_archive_member(filename):
+                        continue
+                    parts = filename.replace("\\", "/").split("/")
+                    if any(part.startswith(".") or part == "__MACOSX" for part in parts):
+                        continue
+                    ext = Path(filename).suffix.lower()
+                    if ext in IMAGE_EXTENSIONS:
+                        base_name = Path(filename).name
+                        valid_images.append(base_name)
+
+                valid_images.sort(key=natural_sort_key)
+                return valid_images
+        except Exception:
+            return []
+
+    def _resolve_chapter_path(self, series_name: str, chapter_name: str) -> Path | None:
+        """
+        Resolves and validates a chapter path (directory or .cbz/.zip archive).
+        Returns the safe Path object or None if invalid.
+        """
+        if not series_name or not chapter_name:
+            return None
+        series_dir = self.root_path / series_name
+        if not self._is_safe_child(series_dir) or not series_dir.is_dir():
+            return None
+
+        # Check direct path
+        chapter_path = series_dir / chapter_name
+        if self._is_safe_child(chapter_path):
+            if chapter_path.is_dir() and not chapter_path.name.startswith("."):
+                return chapter_path
+            if chapter_path.is_file() and chapter_path.suffix.lower() in ARCHIVE_EXTENSIONS and not chapter_path.name.startswith("."):
+                return chapter_path
+
+        # Fallback if chapter_name was passed without extension
+        for ext in ARCHIVE_EXTENSIONS:
+            candidate = series_dir / f"{chapter_name}{ext}"
+            if self._is_safe_child(candidate) and candidate.is_file() and not candidate.name.startswith("."):
+                return candidate
+
+        return None
+
     def list_series(self) -> list:
         """
         Discovers all manga/manhwa series in the library root.
@@ -256,13 +345,18 @@ class MangaLibrary:
         series_list = []
         for entry in os.scandir(self.root_path):
             if entry.is_dir() and not entry.name.startswith("."):
-                # Count valid chapters inside
-                chapter_count = 0
-                for ch in os.scandir(entry.path):
-                    if ch.is_dir() and not ch.name.startswith("."):
-                        chapter_count += 1
+                try:
+                    chapter_count = sum(
+                        1 for ch in os.scandir(entry.path)
+                        if not ch.name.startswith(".") and (
+                            ch.is_dir() or
+                            (ch.is_file() and Path(ch.name).suffix.lower() in ARCHIVE_EXTENSIONS)
+                        )
+                    )
+                except OSError:
+                    chapter_count = 0
 
-                has_cover = self.get_cover_path(entry.name) is not None
+                has_cover = self.get_cover_source(entry.name) is not None
                 series_list.append({
                     "name": entry.name,
                     "chapter_count": chapter_count,
@@ -276,7 +370,8 @@ class MangaLibrary:
     def list_chapters(self, series_name: str) -> list:
         """
         Discovers and naturally sorts all chapters inside a series directory.
-        Ignores hidden folders (like .reader).
+        Supports chapter subdirectories, .cbz files, and .zip files.
+        Ignores hidden folders and files (starting with '.'), and unsupported loose files.
         """
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
@@ -284,53 +379,174 @@ class MangaLibrary:
 
         chapters = []
         for entry in os.scandir(series_dir):
-            if entry.is_dir() and not entry.name.startswith("."):
-                # Count image files in chapter
-                img_count = sum(
-                    1 for f in os.scandir(entry.path)
-                    if f.is_file() and Path(f.name).suffix.lower() in IMAGE_EXTENSIONS
-                )
+            if entry.name.startswith("."):
+                continue
+
+            if entry.is_dir():
+                try:
+                    img_count = sum(
+                        1 for f in os.scandir(entry.path)
+                        if f.is_file() and not f.name.startswith(".") and Path(f.name).suffix.lower() in IMAGE_EXTENSIONS
+                    )
+                except OSError:
+                    img_count = 0
                 chapters.append({
                     "name": entry.name,
                     "image_count": img_count
                 })
+            elif entry.is_file():
+                ext = Path(entry.name).suffix.lower()
+                if ext in ARCHIVE_EXTENSIONS:
+                    images = self._list_archive_images(Path(entry.path))
+                    display_name = entry.name[:-len(ext)]
+                    chapters.append({
+                        "name": display_name,
+                        "image_count": len(images)
+                    })
 
         chapters.sort(key=lambda c: natural_sort_key(c["name"]))
         return chapters
 
-    def list_images(self, series_name: str, chapter_name: str) -> list:
+    def list_images(self, series_name: str, chapter_name: str) -> list[str]:
         """
-        Discovers and naturally sorts all JPG images inside a chapter directory.
+        Discovers and naturally sorts all images inside a chapter (directory or archive).
         """
-        chapter_dir = self.root_path / series_name / chapter_name
-        if not self._is_safe_child(chapter_dir) or not chapter_dir.is_dir():
+        chapter_path = self._resolve_chapter_path(series_name, chapter_name)
+        if not chapter_path:
             return []
 
-        image_files = []
-        for entry in os.scandir(chapter_dir):
-            if entry.is_file() and not entry.name.startswith("."):
-                if Path(entry.name).suffix.lower() in IMAGE_EXTENSIONS:
-                    image_files.append(entry.name)
+        if chapter_path.is_dir():
+            image_files = []
+            try:
+                for entry in os.scandir(chapter_path):
+                    if entry.is_file() and not entry.name.startswith("."):
+                        if Path(entry.name).suffix.lower() in IMAGE_EXTENSIONS:
+                            image_files.append(entry.name)
+            except OSError:
+                return []
+            image_files.sort(key=natural_sort_key)
+            return image_files
 
-        image_files.sort(key=natural_sort_key)
-        return image_files
+        if chapter_path.is_file() and chapter_path.suffix.lower() in ARCHIVE_EXTENSIONS:
+            return self._list_archive_images(chapter_path)
+
+        return []
 
     def get_image_path(self, series_name: str, chapter_name: str, file_name: str) -> Path | None:
-        """Resolves the absolute path of an image securely."""
-        target_path = self.root_path / series_name / chapter_name / file_name
+        """Resolves the absolute path of an image securely for directory chapters."""
+        chapter_path = self._resolve_chapter_path(series_name, chapter_name)
+        if not chapter_path or not chapter_path.is_dir():
+            return None
+        target_path = chapter_path / file_name
         if not self._is_safe_child(target_path):
             return None
         if target_path.is_file() and target_path.suffix.lower() in IMAGE_EXTENSIONS:
             return target_path
         return None
 
-    def get_cover_path(self, series_name: str) -> Path | None:
+    def get_chapter_image_info(self, series_name: str, chapter_name: str, file_name: str) -> tuple[str, Path, str, int, str] | None:
         """
-        Resolves the cover image path for a series.
+        Resolves image information for either a directory chapter or archive chapter.
+        Returns a tuple: (source_type, source_path, member_name_or_empty, file_size, mime_type)
+        where source_type is "file" or "archive".
+        Returns None if not found or invalid.
+        """
+        chapter_path = self._resolve_chapter_path(series_name, chapter_name)
+        if not chapter_path:
+            return None
+
+        # 1. Directory chapter
+        if chapter_path.is_dir():
+            target_path = chapter_path / file_name
+            if not self._is_safe_child(target_path):
+                return None
+            if target_path.is_file() and target_path.suffix.lower() in IMAGE_EXTENSIONS:
+                mime_type, _ = mimetypes.guess_type(str(target_path))
+                if not mime_type:
+                    mime_type = EXTENSION_MIME_TYPES.get(target_path.suffix.lower(), "image/jpeg")
+                return ("file", target_path, "", target_path.stat().st_size, mime_type)
+            return None
+
+        # 2. Archive chapter (.cbz or .zip)
+        if chapter_path.is_file() and chapter_path.suffix.lower() in ARCHIVE_EXTENSIONS:
+            if not is_safe_archive_member(file_name):
+                return None
+            try:
+                if not zipfile.is_zipfile(chapter_path):
+                    return None
+                with zipfile.ZipFile(chapter_path, "r") as zf:
+                    target_info = None
+                    try:
+                        info = zf.getinfo(file_name)
+                        if not info.is_dir() and not info.filename.endswith("/"):
+                            target_info = info
+                    except KeyError:
+                        pass
+
+                    # Fallback to matching by basename
+                    if not target_info:
+                        for info in zf.infolist():
+                            if info.is_dir() or info.filename.endswith("/"):
+                                continue
+                            if Path(info.filename).name == file_name:
+                                target_info = info
+                                break
+
+                    if not target_info:
+                        return None
+
+                    if not is_safe_archive_member(target_info.filename):
+                        return None
+
+                    ext = Path(target_info.filename).suffix.lower()
+                    if ext not in IMAGE_EXTENSIONS:
+                        return None
+
+                    mime_type, _ = mimetypes.guess_type(target_info.filename)
+                    if not mime_type:
+                        mime_type = EXTENSION_MIME_TYPES.get(ext, "image/jpeg")
+
+                    return ("archive", chapter_path, target_info.filename, target_info.file_size, mime_type)
+            except Exception:
+                return None
+
+        return None
+
+    def get_cover_source(self, series_name: str) -> tuple[str, Path, str, int, str] | None:
+        """
+        Resolves the cover image source for a series.
         Priority:
         1. <series_dir>/cover.jpg (or .jpeg)
-        2. First image of the first naturally sorted chapter
+        2. First image of the first naturally sorted chapter (directory or archive)
         Returns None if no cover or chapter images exist.
+        """
+        series_dir = self.root_path / series_name
+        if not self._is_safe_child(series_dir) or not series_dir.is_dir():
+            return None
+
+        # Priority 1: <series_dir>/cover.jpg (or .jpeg)
+        for cand_name in ("cover.jpg", "cover.jpeg"):
+            candidate = series_dir / cand_name
+            if candidate.is_file():
+                mime_type = "image/jpeg"
+                return ("file", candidate, "", candidate.stat().st_size, mime_type)
+
+        # Priority 2: First image of the first naturally sorted chapter
+        chapters = self.list_chapters(series_name)
+        for ch in chapters:
+            images = self.list_images(series_name, ch["name"])
+            if images:
+                first_img = images[0]
+                img_info = self.get_chapter_image_info(series_name, ch["name"], first_img)
+                if img_info:
+                    return img_info
+
+        return None
+
+    def get_cover_path(self, series_name: str) -> Path | None:
+        """
+        Resolves the cover image path for a series if located directly on disk as a file.
+        Preserves backward compatibility for callers expecting a Path.
         """
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
@@ -344,7 +560,7 @@ class MangaLibrary:
         if candidate_jpeg.is_file():
             return candidate_jpeg
 
-        # Priority 2: First image of the first naturally sorted chapter
+        # Priority 2: First image of first chapter if chapter is a directory
         chapters = self.list_chapters(series_name)
         for ch in chapters:
             images = self.list_images(series_name, ch["name"])
@@ -356,13 +572,33 @@ class MangaLibrary:
 
         return None
 
-    def get_background_path(self, series_name: str) -> Path | None:
+    def get_background_source(self, series_name: str) -> tuple[str, Path, str, int, str] | None:
         """
-        Resolves the atmospheric background image path for a series hero.
+        Resolves the atmospheric background image source for a series hero.
         Priority:
         1. <series_dir>/background.jpg (or .jpeg)
-        2. Fallback to <series_dir>/cover.jpg
-        Returns None if neither exists.
+        2. <series_dir>/cover.jpg (or .jpeg)
+        3. First image of the first naturally sorted chapter (directory or archive)
+        4. None if no image exists anywhere
+        """
+        series_dir = self.root_path / series_name
+        if not self._is_safe_child(series_dir) or not series_dir.is_dir():
+            return None
+
+        # Priority 1: <series_dir>/background.jpg (or .jpeg)
+        for cand_name in ("background.jpg", "background.jpeg"):
+            candidate = series_dir / cand_name
+            if candidate.is_file():
+                mime_type = "image/jpeg"
+                return ("file", candidate, "", candidate.stat().st_size, mime_type)
+
+        # Priority 2 & 3: Fallback to cover source (cover.jpg/jpeg, then first image of first chapter)
+        return self.get_cover_source(series_name)
+
+    def get_background_path(self, series_name: str) -> Path | None:
+        """
+        Resolves the atmospheric background image path for a series hero if located directly on disk as a file.
+        Preserves backward compatibility.
         """
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
@@ -520,9 +756,30 @@ class MangaLibrary:
                 if raw_style in ("spaced", "seamless"):
                     style = raw_style
 
+            # Normalize progress and bookmarks so both display names and archive filenames work seamlessly
+            normalized_progress = {}
+            for k, v in progress.items():
+                if isinstance(k, str) and isinstance(v, str):
+                    normalized_progress[k] = v
+                    for ext in ARCHIVE_EXTENSIONS:
+                        if k.lower().endswith(ext):
+                            normalized_progress[k[:-len(ext)]] = v
+                        elif (series_dir / f"{k}{ext}").is_file():
+                            normalized_progress[f"{k}{ext}"] = v
+
+            normalized_bookmarks = set()
+            for b in bookmarks:
+                if isinstance(b, str):
+                    normalized_bookmarks.add(b)
+                    for ext in ARCHIVE_EXTENSIONS:
+                        if b.lower().endswith(ext):
+                            normalized_bookmarks.add(b[:-len(ext)])
+                        elif (series_dir / f"{b}{ext}").is_file():
+                            normalized_bookmarks.add(f"{b}{ext}")
+
             result = {
-                "progress": progress,
-                "bookmarks": bookmarks,
+                "progress": normalized_progress,
+                "bookmarks": sorted(list(normalized_bookmarks), key=natural_sort_key),
                 "reader": {
                     "style": style
                 }
@@ -659,8 +916,8 @@ class MangaLibrary:
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
             return None
 
-        chapter_dir = series_dir / chapter_name
-        if not self._is_safe_child(chapter_dir) or not chapter_dir.is_dir():
+        chapter_path = self._resolve_chapter_path(series_name, chapter_name)
+        if not chapter_path:
             return None
 
         # Validate image filename (must not contain path separators)
@@ -672,6 +929,12 @@ class MangaLibrary:
             return None
 
         data["progress"][chapter_name] = image_name
+        for ext in ARCHIVE_EXTENSIONS:
+            if chapter_name.lower().endswith(ext):
+                data["progress"][chapter_name[:-len(ext)]] = image_name
+            elif (series_dir / f"{chapter_name}{ext}").is_file():
+                data["progress"][f"{chapter_name}{ext}"] = image_name
+
         if self.save_reader_data(series_name, data):
             return data
         return None
@@ -684,8 +947,8 @@ class MangaLibrary:
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
             return None
 
-        chapter_dir = series_dir / chapter_name
-        if not self._is_safe_child(chapter_dir) or not chapter_dir.is_dir():
+        chapter_path = self._resolve_chapter_path(series_name, chapter_name)
+        if not chapter_path:
             return None
 
         data = self.get_reader_data(series_name)
@@ -693,15 +956,23 @@ class MangaLibrary:
             return None
 
         bookmarks = set(data.get("bookmarks", []))
+        names_to_modify = {chapter_name}
+        for ext in ARCHIVE_EXTENSIONS:
+            if chapter_name.lower().endswith(ext):
+                names_to_modify.add(chapter_name[:-len(ext)])
+            elif (series_dir / f"{chapter_name}{ext}").is_file():
+                names_to_modify.add(f"{chapter_name}{ext}")
+
         if bookmarked is None:
-            if chapter_name in bookmarks:
-                bookmarks.remove(chapter_name)
+            is_currently_bookmarked = any(n in bookmarks for n in names_to_modify)
+            if is_currently_bookmarked:
+                bookmarks.difference_update(names_to_modify)
             else:
-                bookmarks.add(chapter_name)
+                bookmarks.update(names_to_modify)
         elif bookmarked:
-            bookmarks.add(chapter_name)
+            bookmarks.update(names_to_modify)
         else:
-            bookmarks.discard(chapter_name)
+            bookmarks.difference_update(names_to_modify)
 
         data["bookmarks"] = sorted(list(bookmarks), key=natural_sort_key)
         if self.save_reader_data(series_name, data):
@@ -785,7 +1056,7 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
             image_items = [
                 {
                     "filename": img,
-                    "url": f"/api/image-file?series={unquote(series_name)}&chapter={unquote(chapter_name)}&file={img}"
+                    "url": f"/api/image-file?series={quote(series_name)}&chapter={quote(chapter_name)}&file={quote(img)}"
                 }
                 for img in images
             ]
@@ -807,30 +1078,46 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 self._send_error("Missing required query parameters: 'series', 'chapter', 'file'", HTTPStatus.BAD_REQUEST)
                 return
 
-            image_path = self.library.get_image_path(series_name, chapter_name, file_name)
-            if not image_path:
+            info = self.library.get_chapter_image_info(series_name, chapter_name, file_name)
+            if not info:
                 self._send_error(f"Image not found: {file_name}", HTTPStatus.NOT_FOUND)
                 return
 
-            try:
-                mime_type, _ = mimetypes.guess_type(str(image_path))
-                if not mime_type:
-                    mime_type = "image/jpeg"
+            source_type = info[0]
+            if source_type == "file":
+                _, image_path, _, file_size, mime_type = info
+                try:
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", mime_type)
+                    self.send_header("Content-Length", str(file_size))
+                    self.send_header("Cache-Control", "public, max-age=86400")
+                    self.end_headers()
 
-                file_size = image_path.stat().st_size
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", mime_type)
-                self.send_header("Content-Length", str(file_size))
-                self.send_header("Cache-Control", "public, max-age=86400")
-                self.end_headers()
+                    with open(image_path, "rb") as f:
+                        # Stream in 64KB chunks to keep memory usage minimal
+                        while chunk := f.read(65536):
+                            self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                return
+            elif source_type == "archive":
+                _, archive_path, member_name, file_size, mime_type = info
+                try:
+                    with zipfile.ZipFile(archive_path, "r") as zf:
+                        self.send_response(HTTPStatus.OK)
+                        self.send_header("Content-Type", mime_type)
+                        self.send_header("Content-Length", str(file_size))
+                        self.send_header("Cache-Control", "public, max-age=86400")
+                        self.end_headers()
 
-                with open(image_path, "rb") as f:
-                    # Stream in 64KB chunks to keep memory usage minimal
-                    while chunk := f.read(65536):
-                        self.wfile.write(chunk)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-            return
+                        with zf.open(member_name, "r") as f:
+                            while chunk := f.read(65536):
+                                self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                except Exception:
+                    self._send_error(f"Failed to read image from archive: {file_name}", HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
 
         # 5. API: Serve series cover image (/api/cover?series=...)
         if path == "/api/cover":
@@ -839,37 +1126,65 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 self._send_error("Missing required query parameter: 'series'", HTTPStatus.BAD_REQUEST)
                 return
 
-            cover_path = self.library.get_cover_path(series_name)
-            if not cover_path or not cover_path.is_file():
+            cover_info = self.library.get_cover_source(series_name)
+            if not cover_info:
                 self._send_error(f"Cover not found for series: {series_name}", HTTPStatus.NOT_FOUND)
                 return
 
-            try:
-                with open(cover_path, "rb") as f:
-                    header = f.read(32)
-                fmt = detect_image_format(header)
-                if fmt and fmt in SUPPORTED_IMAGE_TYPES:
-                    mime_type = SUPPORTED_IMAGE_TYPES[fmt]
-                else:
-                    mime_type, _ = mimetypes.guess_type(str(cover_path))
-                    if not mime_type:
-                        mime_type = "image/jpeg"
+            source_type = cover_info[0]
+            if source_type == "file":
+                _, cover_path, _, file_size, mime_type = cover_info
+                try:
+                    with open(cover_path, "rb") as f:
+                        header = f.read(32)
+                    fmt = detect_image_format(header)
+                    if fmt and fmt in SUPPORTED_IMAGE_TYPES:
+                        mime_type = SUPPORTED_IMAGE_TYPES[fmt]
+                    elif not mime_type:
+                        mime_type, _ = mimetypes.guess_type(str(cover_path))
+                        if not mime_type:
+                            mime_type = "image/jpeg"
 
-                file_size = cover_path.stat().st_size
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", mime_type)
-                self.send_header("Content-Length", str(file_size))
-                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
-                self.send_header("Pragma", "no-cache")
-                self.send_header("Expires", "0")
-                self.end_headers()
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", mime_type)
+                    self.send_header("Content-Length", str(file_size))
+                    self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                    self.send_header("Pragma", "no-cache")
+                    self.send_header("Expires", "0")
+                    self.end_headers()
 
-                with open(cover_path, "rb") as f:
-                    while chunk := f.read(65536):
-                        self.wfile.write(chunk)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-            return
+                    with open(cover_path, "rb") as f:
+                        while chunk := f.read(65536):
+                            self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                return
+            elif source_type == "archive":
+                _, archive_path, member_name, file_size, mime_type = cover_info
+                try:
+                    with zipfile.ZipFile(archive_path, "r") as zf:
+                        with zf.open(member_name, "r") as f:
+                            header = f.read(32)
+                        fmt = detect_image_format(header)
+                        if fmt and fmt in SUPPORTED_IMAGE_TYPES:
+                            mime_type = SUPPORTED_IMAGE_TYPES[fmt]
+
+                        self.send_response(HTTPStatus.OK)
+                        self.send_header("Content-Type", mime_type)
+                        self.send_header("Content-Length", str(file_size))
+                        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                        self.send_header("Pragma", "no-cache")
+                        self.send_header("Expires", "0")
+                        self.end_headers()
+
+                        with zf.open(member_name, "r") as f:
+                            while chunk := f.read(65536):
+                                self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                except Exception:
+                    self._send_error(f"Failed to read cover from archive: {series_name}", HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
 
         # 5b. API: Serve series background image (/api/background?series=...)
         if path == "/api/background":
@@ -878,37 +1193,65 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 self._send_error("Missing required query parameter: 'series'", HTTPStatus.BAD_REQUEST)
                 return
 
-            bg_path = self.library.get_background_path(series_name)
-            if not bg_path or not bg_path.is_file():
+            bg_info = self.library.get_background_source(series_name)
+            if not bg_info:
                 self._send_error(f"Background not found for series: {series_name}", HTTPStatus.NOT_FOUND)
                 return
 
-            try:
-                with open(bg_path, "rb") as f:
-                    header = f.read(32)
-                fmt = detect_image_format(header)
-                if fmt and fmt in SUPPORTED_IMAGE_TYPES:
-                    mime_type = SUPPORTED_IMAGE_TYPES[fmt]
-                else:
-                    mime_type, _ = mimetypes.guess_type(str(bg_path))
-                    if not mime_type:
-                        mime_type = "image/jpeg"
+            source_type = bg_info[0]
+            if source_type == "file":
+                _, bg_path, _, file_size, mime_type = bg_info
+                try:
+                    with open(bg_path, "rb") as f:
+                        header = f.read(32)
+                    fmt = detect_image_format(header)
+                    if fmt and fmt in SUPPORTED_IMAGE_TYPES:
+                        mime_type = SUPPORTED_IMAGE_TYPES[fmt]
+                    elif not mime_type:
+                        mime_type, _ = mimetypes.guess_type(str(bg_path))
+                        if not mime_type:
+                            mime_type = "image/jpeg"
 
-                file_size = bg_path.stat().st_size
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", mime_type)
-                self.send_header("Content-Length", str(file_size))
-                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
-                self.send_header("Pragma", "no-cache")
-                self.send_header("Expires", "0")
-                self.end_headers()
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", mime_type)
+                    self.send_header("Content-Length", str(file_size))
+                    self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                    self.send_header("Pragma", "no-cache")
+                    self.send_header("Expires", "0")
+                    self.end_headers()
 
-                with open(bg_path, "rb") as f:
-                    while chunk := f.read(65536):
-                        self.wfile.write(chunk)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-            return
+                    with open(bg_path, "rb") as f:
+                        while chunk := f.read(65536):
+                            self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                return
+            elif source_type == "archive":
+                _, archive_path, member_name, file_size, mime_type = bg_info
+                try:
+                    with zipfile.ZipFile(archive_path, "r") as zf:
+                        with zf.open(member_name, "r") as f:
+                            header = f.read(32)
+                        fmt = detect_image_format(header)
+                        if fmt and fmt in SUPPORTED_IMAGE_TYPES:
+                            mime_type = SUPPORTED_IMAGE_TYPES[fmt]
+
+                        self.send_response(HTTPStatus.OK)
+                        self.send_header("Content-Type", mime_type)
+                        self.send_header("Content-Length", str(file_size))
+                        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                        self.send_header("Pragma", "no-cache")
+                        self.send_header("Expires", "0")
+                        self.end_headers()
+
+                        with zf.open(member_name, "r") as f:
+                            while chunk := f.read(65536):
+                                self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                except Exception:
+                    self._send_error(f"Failed to read background from archive: {series_name}", HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
 
         # 6. API: Get reader data (bookmarks, progress, preferences, metadata) for a series (/api/reader-data?series=...)
         if path in ("/api/reader-data", "/api/metadata"):
@@ -927,7 +1270,7 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 "summary": data.get("summary", ""),
                 "author": data.get("author", ""),
                 "links": data.get("links", {}),
-                "has_cover": self.library.get_cover_path(series_name) is not None,
+                "has_cover": self.library.get_cover_source(series_name) is not None,
                 "has_background": self.library.has_background_file(series_name),
                 "progress": data["progress"],
                 "bookmarks": data["bookmarks"],
@@ -1152,7 +1495,7 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                     "summary": data.get("summary", ""),
                     "author": data.get("author", ""),
                     "links": data.get("links", {}),
-                    "has_cover": self.library.get_cover_path(series) is not None,
+                    "has_cover": self.library.get_cover_source(series) is not None,
                     "has_background": self.library.has_background_file(series),
                     "progress": data["progress"],
                     "bookmarks": data["bookmarks"],

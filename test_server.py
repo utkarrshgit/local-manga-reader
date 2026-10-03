@@ -7,6 +7,7 @@ import os
 import sys
 import subprocess
 import time
+import zipfile
 from server import MangaLibrary, natural_sort_key
 
 
@@ -1949,6 +1950,476 @@ fi
             r6 = subprocess.run([str(self.launcher_path)], env=env6, capture_output=True, text=True, input="")
             self.assertEqual(r6.returncode, 0)
             self.assertIn("No manga library folder selected.", r6.stdout)
+
+
+class TestArchiveAndFlexibleDiscovery(unittest.TestCase):
+    """Unit tests for flexible chapter/image discovery and .cbz / .zip archive support."""
+
+    def setUp(self):
+        from server import MangaRequestHandler
+        self.MangaRequestHandler = MangaRequestHandler
+        self.temp_dir = tempfile.mkdtemp()
+        self.lib_path = Path(self.temp_dir)
+        self.library = MangaLibrary(str(self.lib_path))
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def _simulate_get(self, path: str):
+        raw_request = f"GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n".encode("utf-8")
+        sock = MockSocket(raw_request)
+
+        class CustomHandler(self.MangaRequestHandler):
+            def __init__(self, request, client_address, server):
+                self.request = request
+                self.client_address = client_address
+                self.server = server
+                self.setup()
+                try:
+                    self.handle()
+                finally:
+                    self.finish()
+
+            def log_message(self, format, *args):
+                pass
+
+        CustomHandler.library = self.library
+        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler(sock, ("127.0.0.1", 8000), None)
+
+        sock.wfile.seek(0)
+        response_data = sock.wfile.read()
+        header_end = response_data.find(b"\r\n\r\n")
+        headers = response_data[:header_end].decode("utf-8", errors="replace")
+        body = response_data[header_end + 4:]
+        return headers, body
+
+    def _simulate_post(self, path: str, json_data: dict):
+        body_bytes = json.dumps(json_data).encode("utf-8")
+        raw_request = (
+            f"POST {path} HTTP/1.1\r\n"
+            f"Host: localhost\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: {len(body_bytes)}\r\n\r\n"
+        ).encode("utf-8") + body_bytes
+        sock = MockSocket(raw_request)
+
+        class CustomHandler(self.MangaRequestHandler):
+            def __init__(self, request, client_address, server):
+                self.request = request
+                self.client_address = client_address
+                self.server = server
+                self.setup()
+                try:
+                    self.handle()
+                finally:
+                    self.finish()
+
+            def log_message(self, format, *args):
+                pass
+
+        CustomHandler.library = self.library
+        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler(sock, ("127.0.0.1", 8000), None)
+
+        sock.wfile.seek(0)
+        response_data = sock.wfile.read()
+        header_end = response_data.find(b"\r\n\r\n")
+        headers = response_data[:header_end].decode("utf-8", errors="replace")
+        body = response_data[header_end + 4:]
+        return headers, body
+
+    def test_arbitrary_chapter_directory_names(self):
+        """1. Directory chapters with arbitrary naming schemes are discovered and naturally sorted."""
+        series_dir = self.lib_path / "ArbitraryChapters"
+        series_dir.mkdir(parents=True)
+
+        names = [
+            "Chapter 001 - The Beginning",
+            "chapter-002",
+            "003",
+            "Volume 4",
+            "My First Chapter",
+            "10. Final Chapter"
+        ]
+        for name in names:
+            ch_dir = series_dir / name
+            ch_dir.mkdir()
+            (ch_dir / "001.jpg").write_bytes(b"JPEG_DATA")
+
+        chapters = self.library.list_chapters("ArbitraryChapters")
+        chapter_names = [c["name"] for c in chapters]
+        # Verify natural sort order
+        expected_order = [
+            "003",
+            "10. Final Chapter",
+            "Chapter 001 - The Beginning",
+            "chapter-002",
+            "My First Chapter",
+            "Volume 4"
+        ]
+        self.assertEqual(chapter_names, expected_order)
+        for c in chapters:
+            self.assertEqual(c["image_count"], 1)
+
+    def test_arbitrary_image_filenames(self):
+        """2. Image files with arbitrary naming schemes are discovered and naturally sorted."""
+        ch_dir = self.lib_path / "SeriesA" / "Chapter 1"
+        ch_dir.mkdir(parents=True)
+
+        img_names = [
+            "001.jpg",
+            "page_002.png",
+            "img_0003.webp",
+            "abc.gif",
+            "004 - page.jpg",
+            "10.jpg"
+        ]
+        for name in img_names:
+            (ch_dir / name).write_bytes(b"TEST_IMAGE_BYTES")
+
+        images = self.library.list_images("SeriesA", "Chapter 1")
+        # Verify natural sort
+        self.assertEqual(images, [
+            "001.jpg",
+            "004 - page.jpg",
+            "10.jpg",
+            "abc.gif",
+            "img_0003.webp",
+            "page_002.png"
+        ])
+
+        # Test serving through HTTP handler
+        headers, body = self._simulate_get("/api/image-file?series=SeriesA&chapter=Chapter%201&file=004%20-%20page.jpg")
+        self.assertIn("200 OK", headers)
+        self.assertEqual(body, b"TEST_IMAGE_BYTES")
+
+    def test_cbz_and_zip_discovery_and_natural_sorting(self):
+        """3. .cbz and .zip archive files are discovered and sorted alongside directory chapters."""
+        series_dir = self.lib_path / "MixedSeries"
+        series_dir.mkdir(parents=True)
+
+        # Directory chapter
+        (series_dir / "Chapter 1").mkdir()
+        ((series_dir / "Chapter 1") / "001.jpg").write_bytes(b"IMG1")
+
+        # .cbz archive chapter
+        cbz_path = series_dir / "Chapter 2.cbz"
+        with zipfile.ZipFile(cbz_path, "w") as zf:
+            zf.writestr("001.jpg", b"CBZ_IMG_1")
+            zf.writestr("002.png", b"CBZ_IMG_2")
+
+        # .zip archive chapter
+        zip_path = series_dir / "Chapter 3.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("001.jpg", b"ZIP_IMG_1")
+
+        # Higher numbered cbz
+        cbz10_path = series_dir / "Chapter 10.cbz"
+        with zipfile.ZipFile(cbz10_path, "w") as zf:
+            zf.writestr("001.jpg", b"CBZ10_IMG_1")
+
+        chapters = self.library.list_chapters("MixedSeries")
+        self.assertEqual([c["name"] for c in chapters], ["Chapter 1", "Chapter 2", "Chapter 3", "Chapter 10"])
+        self.assertEqual([c["image_count"] for c in chapters], [1, 2, 1, 1])
+
+    def test_serving_images_directly_from_archives_without_extraction(self):
+        """4. Images are streamed on the fly from archives without creating extracted files on disk."""
+        series_dir = self.lib_path / "StreamSeries"
+        series_dir.mkdir(parents=True)
+        cbz_path = series_dir / "Chapter 1.cbz"
+
+        dummy_png = b"\x89PNG\r\n\x1a\n" + b"TEST_PNG_CONTENT"
+        dummy_jpeg = b"\xff\xd8\xff\xe0" + b"TEST_JPEG_CONTENT"
+
+        with zipfile.ZipFile(cbz_path, "w") as zf:
+            zf.writestr("page_001.jpg", dummy_jpeg)
+            zf.writestr("page_002.png", dummy_png)
+
+        # List images via API
+        headers, body = self._simulate_get("/api/images?series=StreamSeries&chapter=Chapter%201.cbz")
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(data["image_count"], 2)
+        self.assertEqual([img["filename"] for img in data["images"]], ["page_001.jpg", "page_002.png"])
+
+        # Fetch JPEG
+        headers, body = self._simulate_get("/api/image-file?series=StreamSeries&chapter=Chapter%201.cbz&file=page_001.jpg")
+        self.assertIn("200 OK", headers)
+        self.assertIn("Content-Type: image/jpeg", headers)
+        self.assertEqual(body, dummy_jpeg)
+
+        # Fetch PNG
+        headers, body = self._simulate_get("/api/image-file?series=StreamSeries&chapter=Chapter%201.cbz&file=page_002.png")
+        self.assertIn("200 OK", headers)
+        self.assertIn("Content-Type: image/png", headers)
+        self.assertEqual(body, dummy_png)
+
+        # Verify extensionless chapter resolution works
+        headers, body = self._simulate_get("/api/image-file?series=StreamSeries&chapter=Chapter%201&file=page_001.jpg")
+        self.assertIn("200 OK", headers)
+        self.assertEqual(body, dummy_jpeg)
+
+        # CRITICAL: Verify NO files were extracted to disk anywhere in series_dir
+        series_entries = list(series_dir.iterdir())
+        self.assertEqual(len(series_entries), 1)
+        self.assertEqual(series_entries[0].name, "Chapter 1.cbz")
+
+    def test_archive_nested_directory_and_macos_metadata_handling(self):
+        """5. Handles archives containing internal subfolders and ignores __MACOSX / .DS_Store."""
+        series_dir = self.lib_path / "NestedArchiveSeries"
+        series_dir.mkdir(parents=True)
+        zip_path = series_dir / "Chapter 1.zip"
+
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("__MACOSX/._001.jpg", b"MAC_METADATA")
+            zf.writestr(".DS_Store", b"DS_STORE")
+            zf.writestr("subfolder/.hidden.jpg", b"HIDDEN")
+            zf.writestr("subfolder/001.jpg", b"IMG_1")
+            zf.writestr("subfolder/002.jpg", b"IMG_2")
+            zf.writestr("notes.txt", b"NOT AN IMAGE")
+
+        images = self.library.list_images("NestedArchiveSeries", "Chapter 1.zip")
+        self.assertEqual(images, ["001.jpg", "002.jpg"])
+
+        # Fetch nested image by bare filename
+        headers, body = self._simulate_get("/api/image-file?series=NestedArchiveSeries&chapter=Chapter%201.zip&file=001.jpg")
+        self.assertIn("200 OK", headers)
+        self.assertEqual(body, b"IMG_1")
+
+    def test_unsupported_loose_files_ignored(self):
+        """6. Loose files in series directory (.txt, .pdf, .nfo, loose images) are ignored as chapters."""
+        series_dir = self.lib_path / "LooseFileSeries"
+        series_dir.mkdir(parents=True)
+
+        (series_dir / "notes.txt").write_text("notes")
+        (series_dir / "info.nfo").write_text("info")
+        (series_dir / "manga.pdf").write_bytes(b"%PDF-1.4")
+        (series_dir / "loose_page.jpg").write_bytes(b"JPEG")
+        (series_dir / ".hidden_folder").mkdir()
+        (series_dir / "ValidChapter").mkdir()
+        ((series_dir / "ValidChapter") / "001.jpg").write_bytes(b"IMG")
+
+        chapters = self.library.list_chapters("LooseFileSeries")
+        self.assertEqual([c["name"] for c in chapters], ["ValidChapter"])
+
+    def test_corrupt_and_empty_archives(self):
+        """7. Corrupt and empty archives are handled gracefully without server crashes."""
+        series_dir = self.lib_path / "BrokenSeries"
+        series_dir.mkdir(parents=True)
+
+        # Corrupt file disguised as cbz
+        (series_dir / "CorruptChapter.cbz").write_bytes(b"THIS IS NOT A VALID ZIP ARCHIVE")
+
+        # Empty valid zip
+        with zipfile.ZipFile(series_dir / "EmptyChapter.zip", "w") as _:
+            pass
+
+        chapters = self.library.list_chapters("BrokenSeries")
+        self.assertEqual(len(chapters), 2)
+        for ch in chapters:
+            self.assertEqual(ch["image_count"], 0)
+
+        # Requesting images for corrupt archive returns empty list
+        self.assertEqual(self.library.list_images("BrokenSeries", "CorruptChapter.cbz"), [])
+
+        # Requesting image file from corrupt archive returns 404
+        headers, _ = self._simulate_get("/api/image-file?series=BrokenSeries&chapter=CorruptChapter.cbz&file=001.jpg")
+        self.assertIn("404", headers)
+
+    def test_archive_path_traversal_rejection(self):
+        """8. Archive member traversal attacks (.. or leading /) are rejected."""
+        series_dir = self.lib_path / "SecuritySeries"
+        series_dir.mkdir(parents=True)
+        zip_path = series_dir / "HackedChapter.zip"
+
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("../../../etc/passwd.jpg", b"MALICIOUS")
+            zf.writestr("/absolute/path.jpg", b"MALICIOUS")
+            zf.writestr("safe_001.jpg", b"SAFE")
+
+        images = self.library.list_images("SecuritySeries", "HackedChapter.zip")
+        self.assertEqual(images, ["safe_001.jpg"])
+
+        # Attempt to request traversal via API returns 404 (Not Found)
+        headers, _ = self._simulate_get("/api/image-file?series=SecuritySeries&chapter=HackedChapter.zip&file=..%2F..%2Fetc%2Fpasswd.jpg")
+        self.assertIn("404", headers)
+
+    def test_cover_detection_from_first_archive_chapter(self):
+        """9. Series without top-level cover.jpg detects cover from first archive chapter."""
+        series_dir = self.lib_path / "ArchiveCoverSeries"
+        series_dir.mkdir(parents=True)
+
+        cbz_path = series_dir / "Chapter 01.cbz"
+        dummy_cover = b"\xff\xd8\xff\xe0" + b"ARCHIVE_COVER_JPEG"
+        with zipfile.ZipFile(cbz_path, "w") as zf:
+            zf.writestr("001.jpg", dummy_cover)
+
+        series_list = self.library.list_series()
+        s = next(s for s in series_list if s["name"] == "ArchiveCoverSeries")
+        self.assertTrue(s["has_cover"])
+        self.assertIn("/api/cover?series=ArchiveCoverSeries", s["cover_url"])
+
+        # Fetch cover via API
+        headers, body = self._simulate_get("/api/cover?series=ArchiveCoverSeries")
+        self.assertIn("200 OK", headers)
+        self.assertIn("Content-Type: image/jpeg", headers)
+        self.assertEqual(body, dummy_cover)
+
+    def test_reading_progress_and_bookmarks_with_archives(self):
+        """10. Reading progress and bookmarks work seamlessly with .cbz and .zip chapters."""
+        series_dir = self.lib_path / "ArchiveProgressSeries"
+        series_dir.mkdir(parents=True)
+
+        cbz_path = series_dir / "Chapter 1.cbz"
+        with zipfile.ZipFile(cbz_path, "w") as zf:
+            zf.writestr("001.jpg", b"IMG")
+
+        # Save progress using stripped display name
+        headers, body = self._simulate_post("/api/progress", {
+            "series": "ArchiveProgressSeries",
+            "chapter": "Chapter 1",
+            "image": "001.jpg"
+        })
+        self.assertIn("200 OK", headers)
+        resp = json.loads(body.decode("utf-8"))
+        self.assertEqual(resp["progress"]["Chapter 1"], "001.jpg")
+        self.assertEqual(resp["progress"]["Chapter 1.cbz"], "001.jpg")
+
+        # Bookmark chapter using stripped display name
+        headers, body = self._simulate_post("/api/bookmark", {
+            "series": "ArchiveProgressSeries",
+            "chapter": "Chapter 1",
+            "bookmarked": True
+        })
+        self.assertIn("200 OK", headers)
+        resp = json.loads(body.decode("utf-8"))
+        self.assertTrue(resp["bookmarked"])
+
+        # Fetch reader-data
+        headers, body = self._simulate_get("/api/reader-data?series=ArchiveProgressSeries")
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(data["progress"]["Chapter 1"], "001.jpg")
+        self.assertIn("Chapter 1", data["bookmarks"])
+        self.assertIn("Chapter 1.cbz", data["bookmarks"])
+
+    def test_background_fallback_to_first_image_of_cbz(self):
+        """11. Background falls back to the first image of a .cbz archive when no background or cover exists."""
+        series_dir = self.lib_path / "BgCbzSeries"
+        series_dir.mkdir(parents=True)
+
+        cbz_path = series_dir / "Chapter 1.cbz"
+        dummy_img = b"\xff\xd8\xff\xe0" + b"CBZ_BG_JPEG"
+        with zipfile.ZipFile(cbz_path, "w") as zf:
+            zf.writestr("001.jpg", dummy_img)
+            zf.writestr("002.jpg", b"IMG_2")
+
+        headers, body = self._simulate_get("/api/background?series=BgCbzSeries")
+        self.assertIn("200 OK", headers)
+        self.assertIn("Content-Type: image/jpeg", headers)
+        self.assertEqual(body, dummy_img)
+
+    def test_background_fallback_to_first_image_of_zip(self):
+        """12. Background falls back to the first image of a .zip archive when no background or cover exists."""
+        series_dir = self.lib_path / "BgZipSeries"
+        series_dir.mkdir(parents=True)
+
+        zip_path = series_dir / "Chapter 1.zip"
+        dummy_img = b"\x89PNG\r\n\x1a\n" + b"ZIP_BG_PNG"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("001.png", dummy_img)
+
+        headers, body = self._simulate_get("/api/background?series=BgZipSeries")
+        self.assertIn("200 OK", headers)
+        self.assertIn("Content-Type: image/png", headers)
+        self.assertEqual(body, dummy_img)
+
+    def test_background_priority_background_jpg_over_cover_and_archive(self):
+        """13. background.jpg takes priority over cover.jpg and archive chapter image."""
+        series_dir = self.lib_path / "BgPrioSeries"
+        series_dir.mkdir(parents=True)
+
+        bg_bytes = b"\xff\xd8\xff\xe0" + b"PRIO_BACKGROUND_JPG"
+        cover_bytes = b"\xff\xd8\xff\xe0" + b"PRIO_COVER_JPG"
+        archive_img = b"\xff\xd8\xff\xe0" + b"PRIO_ARCHIVE_IMG"
+
+        (series_dir / "background.jpg").write_bytes(bg_bytes)
+        (series_dir / "cover.jpg").write_bytes(cover_bytes)
+        with zipfile.ZipFile(series_dir / "Chapter 1.cbz", "w") as zf:
+            zf.writestr("001.jpg", archive_img)
+
+        headers, body = self._simulate_get("/api/background?series=BgPrioSeries")
+        self.assertIn("200 OK", headers)
+        self.assertEqual(body, bg_bytes)
+
+    def test_background_priority_cover_jpg_over_archive_image(self):
+        """14. cover.jpg takes priority over the first chapter archive image when background.jpg is absent."""
+        series_dir = self.lib_path / "CoverPrioSeries"
+        series_dir.mkdir(parents=True)
+
+        cover_bytes = b"\xff\xd8\xff\xe0" + b"COVER_OVER_ARCHIVE_JPG"
+        archive_img = b"\xff\xd8\xff\xe0" + b"ARCHIVE_CHAPTER_IMG"
+
+        (series_dir / "cover.jpg").write_bytes(cover_bytes)
+        with zipfile.ZipFile(series_dir / "Chapter 1.cbz", "w") as zf:
+            zf.writestr("001.jpg", archive_img)
+
+        headers, body = self._simulate_get("/api/background?series=CoverPrioSeries")
+        self.assertIn("200 OK", headers)
+        self.assertEqual(body, cover_bytes)
+
+    def test_background_blank_when_no_usable_image_exists(self):
+        """15. Background returns 404 (blank) when no usable image exists anywhere in the series."""
+        series_dir = self.lib_path / "BgEmptySeries"
+        series_dir.mkdir(parents=True)
+
+        # Empty chapter zip with 0 images
+        with zipfile.ZipFile(series_dir / "Chapter 1.zip", "w") as _:
+            pass
+
+        headers, _ = self._simulate_get("/api/background?series=BgEmptySeries")
+        self.assertIn("404", headers)
+
+    def test_archive_extensions_removed_from_chapter_names(self):
+        """16. .cbz and .zip extensions are removed from chapter display names while folder names remain intact."""
+        series_dir = self.lib_path / "NameStripSeries"
+        series_dir.mkdir(parents=True)
+
+        # Create folder chapter
+        (series_dir / "Chapter 1").mkdir()
+        ((series_dir / "Chapter 1") / "001.jpg").write_bytes(b"F1")
+
+        # Create .cbz and .zip chapters with varied casing and numbering
+        with zipfile.ZipFile(series_dir / "Chapter 2.cbz", "w") as zf:
+            zf.writestr("001.jpg", b"C2")
+        with zipfile.ZipFile(series_dir / "Volume 03.cbz", "w") as zf:
+            zf.writestr("001.jpg", b"V3")
+        with zipfile.ZipFile(series_dir / "Chapter 4.zip", "w") as zf:
+            zf.writestr("001.jpg", b"Z4")
+
+        chapters = self.library.list_chapters("NameStripSeries")
+        names = [c["name"] for c in chapters]
+        # Folder chapter remains 'Chapter 1'
+        self.assertIn("Chapter 1", names)
+        # .cbz and .zip stripped
+        self.assertIn("Chapter 2", names)
+        self.assertIn("Volume 03", names)
+        self.assertIn("Chapter 4", names)
+        for n in names:
+            self.assertFalse(n.endswith(".cbz"))
+            self.assertFalse(n.endswith(".zip"))
+
+        # Natural sorting order check
+        expected_order = ["Chapter 1", "Chapter 2", "Chapter 4", "Volume 03"]
+        self.assertEqual(names, expected_order)
+
+        # Confirm images can be listed and retrieved using the extensionless display name
+        images = self.library.list_images("NameStripSeries", "Chapter 2")
+        self.assertEqual(images, ["001.jpg"])
+        headers, body = self._simulate_get("/api/image-file?series=NameStripSeries&chapter=Chapter%202&file=001.jpg")
+        self.assertIn("200 OK", headers)
+        self.assertEqual(body, b"C2")
 
 
 if __name__ == "__main__":
