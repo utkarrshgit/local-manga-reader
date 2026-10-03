@@ -103,10 +103,13 @@
             <div class="library-sort-wrapper">
               <label for="library-sort" class="sort-label">Sort</label>
               <select id="library-sort" class="library-sort-select" aria-label="Sort series">
-                <option value="az">A–Z</option>
-                <option value="za">Z–A</option>
+                <option value="name">Name</option>
                 <option value="chapters">Chapters</option>
+                <option value="unread">Unread</option>
               </select>
+              <button type="button" id="library-sort-dir" class="library-sort-dir-btn" aria-label="Sort direction: ascending (click to toggle)" title="Ascending (click to toggle)">
+                <span class="sort-dir-arrow" id="library-sort-arrow" aria-hidden="true">↑</span>
+              </button>
             </div>
           </div>
         </div>
@@ -282,6 +285,9 @@
       <div class="chapters-section">
         <div class="chapters-section-header">
           <h2 class="chapters-section-title">Chapters</h2>
+          <button type="button" class="chapters-order-toggle-btn" id="btn-chapter-order" aria-label="Toggle chapter order (currently ascending)" title="Ascending (click to toggle)">
+            <span class="chapter-order-arrow" id="chapter-order-arrow" aria-hidden="true">↑</span>
+          </button>
         </div>
         <div id="chapters-list" class="chapters-list">
           <!-- Chapter items injected by JS -->

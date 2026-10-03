@@ -1,19 +1,19 @@
 /* Local Manga Reader - Minimal Dark Editorial Theme with Crimson & Kuromi Accents */
 
 :root {
-  /* Core Minimal Dark Editorial Palette (Default) */
-  --bg: #0D0B0C;
-  --surface: #151113;
-  --surface-elevated: #1C1618;
-  --surface-hover: #221B1E;
-  --border: #2A2022;
-  --border-subtle: #1E1719;
-  --text: #F1EDEE;
-  --text-secondary: #B8AEB0;
-  --text-muted: #756A6D;
-  --header-bg: rgba(21, 17, 19, 0.90);
-  --header-translucent-bg: rgba(18, 14, 16, 0.35);
-  --overlay-bg: rgba(9, 7, 8, 0.78);
+  /* Core Minimal Neutral Dark Editorial Palette (Shared by both themes) */
+  --bg: #0E0E0E;
+  --surface: #151515;
+  --surface-elevated: #1C1C1C;
+  --surface-hover: #222222;
+  --border: #282828;
+  --border-subtle: #1E1E1E;
+  --text: #F2F2F2;
+  --text-secondary: #B5B5B5;
+  --text-muted: #767676;
+  --header-bg: rgba(20, 20, 20, 0.90);
+  --header-translucent-bg: rgba(18, 18, 18, 0.35);
+  --overlay-bg: rgba(10, 10, 10, 0.78);
   --popover-shadow: 0 10px 28px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.35);
   --modal-shadow: 0 20px 48px rgba(0, 0, 0, 0.65), 0 4px 14px rgba(0, 0, 0, 0.4);
 
@@ -22,6 +22,14 @@
   --accent-hover: #FF4D4D;
   --accent-muted: #8F2A2A;
   --accent-subtle: rgba(229, 57, 53, 0.14);
+  --accent-border: rgba(229, 57, 53, 0.45);
+  --accent-tint: rgba(229, 57, 53, 0.04);
+  --card-hover-border: rgba(229, 57, 53, 0.55);
+  --accent-glow: 0 0 6px rgba(229, 57, 53, 0.65), 0 0 2px rgba(229, 57, 53, 0.85);
+  --progress-current-glow: 0 0 3px rgba(255, 77, 77, 0.45);
+  --progress-hover-glow: 0 0 6px rgba(255, 77, 77, 0.8), 0 -1px 2px rgba(255, 77, 77, 0.4);
+  --series-bg-tint-1: rgba(229, 57, 53, 0.16);
+  --series-bg-tint-2: rgba(160, 20, 30, 0.06);
   --logo-brace-shadow: 0 0 10px rgba(229, 57, 53, 0.45);
   --logo-brace-shadow-hover: 0 0 12px rgba(229, 57, 53, 0.65), 0 0 4px rgba(229, 57, 53, 0.85);
 
@@ -52,6 +60,14 @@
   --accent-hover: #FF4D4D;
   --accent-muted: #8F2A2A;
   --accent-subtle: rgba(229, 57, 53, 0.14);
+  --accent-border: rgba(229, 57, 53, 0.45);
+  --accent-tint: rgba(229, 57, 53, 0.04);
+  --card-hover-border: rgba(229, 57, 53, 0.55);
+  --accent-glow: 0 0 6px rgba(229, 57, 53, 0.65), 0 0 2px rgba(229, 57, 53, 0.85);
+  --progress-current-glow: 0 0 3px rgba(255, 77, 77, 0.45);
+  --progress-hover-glow: 0 0 6px rgba(255, 77, 77, 0.8), 0 -1px 2px rgba(255, 77, 77, 0.4);
+  --series-bg-tint-1: rgba(229, 57, 53, 0.16);
+  --series-bg-tint-2: rgba(160, 20, 30, 0.06);
   --accent-color: var(--accent);
   --logo-brace-shadow: 0 0 10px rgba(229, 57, 53, 0.45);
   --logo-brace-shadow-hover: 0 0 12px rgba(229, 57, 53, 0.65), 0 0 4px rgba(229, 57, 53, 0.85);
@@ -63,6 +79,14 @@
   --accent-hover: #B19AE8;
   --accent-muted: #765DB3;
   --accent-subtle: rgba(155, 126, 219, 0.14);
+  --accent-border: rgba(155, 126, 219, 0.45);
+  --accent-tint: rgba(155, 126, 219, 0.04);
+  --card-hover-border: rgba(155, 126, 219, 0.55);
+  --accent-glow: 0 0 6px rgba(155, 126, 219, 0.65), 0 0 2px rgba(155, 126, 219, 0.85);
+  --progress-current-glow: 0 0 3px rgba(177, 154, 232, 0.45);
+  --progress-hover-glow: 0 0 6px rgba(177, 154, 232, 0.8), 0 -1px 2px rgba(177, 154, 232, 0.4);
+  --series-bg-tint-1: rgba(155, 126, 219, 0.18);
+  --series-bg-tint-2: rgba(118, 93, 179, 0.07);
   --accent-color: var(--accent);
   --logo-brace-shadow: 0 0 10px rgba(155, 126, 219, 0.45);
   --logo-brace-shadow-hover: 0 0 12px rgba(155, 126, 219, 0.65), 0 0 4px rgba(155, 126, 219, 0.85);
@@ -104,7 +128,7 @@ html, body {
 /* Series Detail View: Translucent header overlaying the top of the background */
 body.series-active .app-header {
   background-color: var(--header-translucent-bg);
-  border-bottom-color: rgba(42, 32, 34, 0.25);
+  border-bottom-color: rgba(40, 40, 40, 0.25);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
 }
@@ -751,6 +775,34 @@ body.series-active .header-series-nav {
   color: var(--text);
 }
 
+.library-sort-dir-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 3px 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+  user-select: none;
+}
+
+.library-sort-dir-btn:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+
+.library-sort-dir-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  color: var(--text);
+}
+
 .btn-change-folder {
   background: transparent;
   border: 1px solid var(--border);
@@ -870,7 +922,7 @@ body.series-active .header-series-nav {
 }
 
 .series-card:hover .series-cover-wrapper {
-  border-color: rgba(229, 57, 53, 0.55);
+  border-color: var(--card-hover-border);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
 }
 
@@ -941,7 +993,7 @@ body.series-active .header-series-nav {
 .series-cover-progress-fill {
   height: 100%;
   background-color: var(--accent);
-  box-shadow: 0 0 6px rgba(229, 57, 53, 0.65), 0 0 2px rgba(229, 57, 53, 0.85);
+  box-shadow: var(--accent-glow);
   transition: width 0.2s ease;
 }
 
@@ -1044,9 +1096,9 @@ body.series-active .header-series-nav {
   width: 100%;
   height: 100%;
   background: 
-    radial-gradient(ellipse at 35% 35%, rgba(229, 57, 53, 0.16) 0%, rgba(160, 20, 30, 0.06) 65%, transparent 100%),
-    linear-gradient(to bottom, rgba(13, 11, 12, 0.12) 0%, rgba(13, 11, 12, 0.25) 50%, rgba(13, 11, 12, 0.95) 100%),
-    linear-gradient(to right, rgba(13, 11, 12, 0.30) 0%, transparent 20%, transparent 80%, rgba(13, 11, 12, 0.30) 100%);
+    radial-gradient(ellipse at 35% 35%, var(--series-bg-tint-1) 0%, var(--series-bg-tint-2) 65%, transparent 100%),
+    linear-gradient(to bottom, rgba(14, 14, 14, 0.12) 0%, rgba(14, 14, 14, 0.25) 50%, rgba(14, 14, 14, 0.95) 100%),
+    linear-gradient(to right, rgba(14, 14, 14, 0.30) 0%, transparent 20%, transparent 80%, rgba(14, 14, 14, 0.30) 100%);
   pointer-events: none;
   z-index: 1;
 }
@@ -1260,8 +1312,8 @@ body.series-active .header-series-nav {
 
 .btn-edit-metadata:hover {
   color: var(--accent);
-  border-color: rgba(229, 57, 53, 0.4);
-  background-color: rgba(229, 57, 53, 0.04);
+  border-color: var(--accent-border);
+  background-color: var(--accent-tint);
 }
 
 /* Series Metadata Editor */
@@ -1392,8 +1444,8 @@ body.series-active .header-series-nav {
 .btn-file-select:hover,
 .btn-file-select:focus-visible {
   color: var(--text);
-  border-color: rgba(229, 57, 53, 0.45);
-  background-color: rgba(229, 57, 53, 0.04);
+  border-color: var(--accent-border);
+  background-color: var(--accent-tint);
   outline: none;
 }
 
@@ -1538,16 +1590,44 @@ body.series-active .header-series-nav {
 }
 
 .chapters-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: 14px;
 }
 
 .chapters-section-title {
   font-size: 0.78rem;
-  text-transform: uppercase;
   letter-spacing: 0.12em;
   font-weight: 600;
   color: var(--text-muted);
   margin: 0;
+}
+
+.chapters-order-toggle-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 4px 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-xs);
+  transition: color 0.15s ease, background-color 0.15s ease;
+  user-select: none;
+}
+
+.chapters-order-toggle-btn:hover {
+  color: var(--accent);
+}
+
+.chapters-order-toggle-btn:focus-visible {
+  outline: none;
+  color: var(--accent);
 }
 
 /* Chapter List Rows (Editorial List Rows) */
@@ -1835,7 +1915,7 @@ body.in-fullscreen .reader-header {
   position: sticky;
   top: 0;
   z-index: 100;
-  background-color: rgba(13, 11, 12, 0.94);
+  background-color: rgba(14, 14, 14, 0.94);
   -webkit-backdrop-filter: blur(16px);
   backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--border);
@@ -2124,7 +2204,7 @@ body.in-fullscreen .reader-header {
   padding: 0;
   border: none;
   vertical-align: bottom;
-  background-color: #0D0B0C;
+  background-color: var(--bg);
 }
 
 /* Mode 1: Spaced Reading Style (Manga) */
@@ -2199,10 +2279,10 @@ body.in-fullscreen .reader-header {
   align-items: center;
   margin: 0;
   padding: 4px 0 env(safe-area-inset-bottom, 0px) 0;
-  background-color: rgba(13, 11, 12, 0.96);
+  background-color: rgba(14, 14, 14, 0.96);
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
-  border-top: 1px solid rgba(42, 32, 34, 0.7);
+  border-top: 1px solid rgba(40, 40, 40, 0.7);
   border-radius: 0;
   box-shadow: none;
   user-select: none;
@@ -2293,7 +2373,7 @@ body.in-fullscreen .reader-progress-container {
 /* Current Page */
 .progress-segment.current {
   background-color: var(--accent-hover);
-  box-shadow: 0 0 3px rgba(255, 77, 77, 0.45);
+  box-shadow: var(--progress-current-glow);
 }
 
 /* Future / Unread Pages */
@@ -2307,12 +2387,12 @@ body.in-fullscreen .reader-progress-container {
   background-color: var(--accent);
 }
 
-/* Past / Current page hover & glow (Red) */
+/* Past / Current page hover & glow */
 .progress-segment.past.hovered,
 .progress-segment.current.hovered,
 .progress-segment.completed.hovered {
   background-color: var(--accent-hover) !important;
-  box-shadow: 0 0 6px rgba(255, 77, 77, 0.8), 0 -1px 2px rgba(255, 77, 77, 0.4) !important;
+  box-shadow: var(--progress-hover-glow) !important;
   transform: scaleY(1.8);
   z-index: 5;
 }
@@ -2330,7 +2410,7 @@ body.in-fullscreen .reader-progress-container {
   .progress-segment.current:hover,
   .progress-segment.completed:hover {
     background-color: var(--accent-hover) !important;
-    box-shadow: 0 0 6px rgba(255, 77, 77, 0.8), 0 -1px 2px rgba(255, 77, 77, 0.4) !important;
+    box-shadow: var(--progress-hover-glow) !important;
     transform: scaleY(1.8);
     z-index: 5;
   }
@@ -2411,7 +2491,7 @@ body.in-fullscreen .reader-progress-container {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background-color: rgba(9, 7, 8, 0.78);
+  background-color: var(--overlay-bg);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   z-index: 500;

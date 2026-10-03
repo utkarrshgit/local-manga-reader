@@ -15,6 +15,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const librarySearch = document.getElementById("library-search");
   const librarySearchClear = document.getElementById("library-search-clear");
   const librarySort = document.getElementById("library-sort");
+  const librarySortDir = document.getElementById("library-sort-dir");
+  const librarySortArrow = document.getElementById("library-sort-arrow");
   const libraryNoResults = document.getElementById("library-no-results");
   const btnChangeFolder = document.getElementById("btn-change-folder");
   const libraryUnavailable = document.getElementById("library-unavailable");
@@ -51,6 +53,8 @@ document.addEventListener("DOMContentLoaded", () => {
   // DOM Elements - Chapters & Metadata
   const chaptersList = document.getElementById("chapters-list");
   const chaptersEmpty = document.getElementById("chapters-empty");
+  const btnChapterOrder = document.getElementById("btn-chapter-order");
+  const chapterOrderArrow = document.getElementById("chapter-order-arrow");
   const seriesTitle = document.getElementById("series-title");
   const seriesMeta = document.getElementById("series-meta");
   const seriesCoverThumbWrapper = document.getElementById("series-cover-thumb-wrapper");
@@ -128,7 +132,11 @@ document.addEventListener("DOMContentLoaded", () => {
   // State
   let allSeriesList = [];
   let librarySearchQuery = "";
-  let librarySortMode = "az";
+  let librarySortCriterion = "name";
+  let librarySortDirection = "asc";
+  let seriesChapterOrder = "asc";
+  let currentSeriesChapters = [];
+  let currentSeriesProgressMap = new Map();
   let currentSeries = null;
   let currentChapter = null;
   let currentSeriesBookmarks = new Set();
@@ -137,6 +145,67 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentNextChapter = null;
   let currentChapterImages = [];
   const chapterImagesCache = new Map();
+
+  // Load saved preferences
+  try {
+    const savedSort = localStorage.getItem("local_manga_library_sort");
+    if (savedSort) {
+      const parsed = JSON.parse(savedSort);
+      if (["name", "chapters", "unread"].includes(parsed.criterion)) {
+        librarySortCriterion = parsed.criterion;
+      } else if (parsed.criterion === "za") {
+        librarySortCriterion = "name";
+        librarySortDirection = "desc";
+      } else if (parsed.criterion === "az") {
+        librarySortCriterion = "name";
+        librarySortDirection = "asc";
+      }
+      if (["asc", "desc"].includes(parsed.direction)) {
+        librarySortDirection = parsed.direction;
+      }
+    }
+  } catch {}
+
+  try {
+    const savedOrder = localStorage.getItem("local_manga_chapter_order");
+    if (savedOrder === "asc" || savedOrder === "desc") {
+      seriesChapterOrder = savedOrder;
+    }
+  } catch {}
+
+  function updateLibrarySortUI() {
+    if (librarySort) {
+      librarySort.value = librarySortCriterion;
+    }
+    if (librarySortArrow) {
+      librarySortArrow.textContent = librarySortDirection === "desc" ? "↓" : "↑";
+    }
+    if (librarySortDir) {
+      const dirText = librarySortDirection === "desc" ? "descending" : "ascending";
+      librarySortDir.title = `${dirText.charAt(0).toUpperCase() + dirText.slice(1)} (click to toggle)`;
+      librarySortDir.setAttribute("aria-label", `Sort direction: ${dirText} (click to toggle)`);
+    }
+  }
+
+  function saveLibrarySortPreference() {
+    try {
+      localStorage.setItem("local_manga_library_sort", JSON.stringify({
+        criterion: librarySortCriterion,
+        direction: librarySortDirection
+      }));
+    } catch {}
+  }
+
+  function updateChapterOrderUI() {
+    if (chapterOrderArrow) {
+      chapterOrderArrow.textContent = seriesChapterOrder === "desc" ? "↓" : "↑";
+    }
+    if (btnChapterOrder) {
+      const dirText = seriesChapterOrder === "desc" ? "descending" : "ascending";
+      btnChapterOrder.title = `${dirText.charAt(0).toUpperCase() + dirText.slice(1)} (click to toggle)`;
+      btnChapterOrder.setAttribute("aria-label", `Toggle chapter order (currently ${dirText})`);
+    }
+  }
 
   // Reading progress observer state
   let readerObserver = null;
@@ -967,21 +1036,41 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // Helper to fetch reading progress info for a series in library view
-  async function fetchSeriesProgressInfo(seriesName) {
+  async function fetchSeriesProgressInfo(seriesName, totalChapters) {
+    const fallbackTotal = typeof totalChapters === "number" ? totalChapters : 0;
     try {
       const readerData = await fetchReaderData(seriesName);
       const progress = readerData && readerData.progress ? readerData.progress : {};
       const progressChapters = Object.keys(progress);
       if (progressChapters.length === 0) {
-        return { hasProgress: false };
+        return {
+          hasProgress: false,
+          readCount: 0,
+          unreadCount: fallbackTotal
+        };
       }
 
       // Fetch chapters list to respect natural reading order
       const chRes = await fetch(`/api/chapters?series=${encodeURIComponent(seriesName)}`);
-      if (!chRes.ok) return { hasProgress: false };
+      if (!chRes.ok) {
+        return {
+          hasProgress: false,
+          readCount: progressChapters.length,
+          unreadCount: Math.max(0, fallbackTotal - progressChapters.length)
+        };
+      }
       const chData = await chRes.json();
       const chapters = chData.chapters || [];
-      if (chapters.length === 0) return { hasProgress: false };
+      if (chapters.length === 0) {
+        return {
+          hasProgress: false,
+          readCount: 0,
+          unreadCount: 0
+        };
+      }
+
+      const matchedReadCount = chapters.filter((c) => Boolean(progress[c.name])).length;
+      const accurateUnreadCount = Math.max(0, chapters.length - matchedReadCount);
 
       // Find the latest chapter in natural reading order that exists in progress
       let activeChapter = null;
@@ -1020,10 +1109,16 @@ document.addEventListener("DOMContentLoaded", () => {
       return {
         hasProgress: true,
         chapterName: activeChapter.name,
-        percentage: percentage
+        percentage: percentage,
+        readCount: matchedReadCount,
+        unreadCount: accurateUnreadCount
       };
     } catch {
-      return { hasProgress: false };
+      return {
+        hasProgress: false,
+        readCount: 0,
+        unreadCount: fallbackTotal
+      };
     }
   }
 
@@ -1101,17 +1196,27 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       allSeriesList = data.series || [];
+      allSeriesList.forEach((s) => {
+        s.unreadCount = s.chapter_count || 0;
+      });
 
+      updateLibrarySortUI();
       // Render library immediately using returned series data
       renderLibrarySeries();
 
       // Concurrently resolve existing progress data for all series in background
       if (allSeriesList.length > 0) {
         allSeriesList.forEach((s) => {
-          fetchSeriesProgressInfo(s.name)
+          fetchSeriesProgressInfo(s.name, s.chapter_count)
             .then((prog) => {
               s.progressInfo = prog;
+              if (prog && typeof prog.unreadCount === "number") {
+                s.unreadCount = prog.unreadCount;
+              }
               updateSeriesCardProgress(s.name, prog);
+              if (librarySortCriterion === "unread") {
+                renderLibrarySeries();
+              }
             })
             .catch(() => {});
         });
@@ -1224,14 +1329,30 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Local sort
     filtered = [...filtered].sort((a, b) => {
-      if (librarySortMode === "za") {
-        return b.name.localeCompare(a.name, undefined, { numeric: true, sensitivity: "base" });
-      } else if (librarySortMode === "chapters") {
-        return (b.chapter_count || 0) - (a.chapter_count || 0);
+      let cmp = 0;
+      if (librarySortCriterion === "chapters") {
+        const aCount = a.chapter_count || 0;
+        const bCount = b.chapter_count || 0;
+        cmp = aCount - bCount;
+      } else if (librarySortCriterion === "unread") {
+        const aUnread = typeof a.unreadCount === "number" ? a.unreadCount : (a.chapter_count || 0);
+        const bUnread = typeof b.unreadCount === "number" ? b.unreadCount : (b.chapter_count || 0);
+        cmp = aUnread - bUnread;
       } else {
-        // "az" (default)
+        // "name"
+        cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+      }
+
+      if (librarySortDirection === "desc") {
+        cmp = -cmp;
+      }
+
+      // Stable alphabetical fallback for ties
+      if (cmp === 0 && librarySortCriterion !== "name") {
         return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
       }
+
+      return cmp;
     });
 
     // Update metadata subtitle: quiet, natural casing (e.g. "12 series")
@@ -1790,64 +1911,81 @@ document.addEventListener("DOMContentLoaded", () => {
         );
       }
 
-      chapters.forEach((ch) => {
-        const item = document.createElement("div");
-        item.className = "chapter-item";
-        item.setAttribute("role", "button");
-        item.setAttribute("tabindex", "0");
-
-        const isBookmarked = currentSeriesBookmarks.has(ch.name);
-        const hasProgress = chapterProgressMap.has(ch.name);
-        const progressPct = hasProgress ? chapterProgressMap.get(ch.name) : null;
-
-        item.innerHTML = `
-          <div class="chapter-info">
-            <button class="btn-chapter-bookmark ${isBookmarked ? "bookmarked" : ""}" title="${isBookmarked ? "Remove bookmark" : "Bookmark chapter"}" aria-label="${isBookmarked ? "Remove bookmark" : "Bookmark chapter"}">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
-              </svg>
-            </button>
-            <span class="chapter-title">${escapeHtml(ch.name)}</span>
-          </div>
-          <div class="chapter-actions">
-            <span class="chapter-progress">${progressPct != null ? `${progressPct}%` : ""}</span>
-            <span class="chapter-pages">${ch.image_count} ${ch.image_count === 1 ? "page" : "pages"}</span>
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" class="chapter-arrow">
-              <path d="M9 18l6-6-6-6"/>
-            </svg>
-          </div>
-        `;
-
-        // Bookmark button click
-        const bookmarkBtn = item.querySelector(".btn-chapter-bookmark");
-        bookmarkBtn.addEventListener("click", async (e) => {
-          e.stopPropagation();
-          const willBookmark = !currentSeriesBookmarks.has(ch.name);
-          const result = await toggleBookmark(seriesName, ch.name, willBookmark);
-          if (result) {
-            loadChapters(seriesName);
-          }
-        });
-
-        // Row click navigates to chapter reader
-        item.addEventListener("click", () => {
-          window.location.hash = `#/read/${encodeURIComponent(seriesName)}/${encodeURIComponent(ch.name)}`;
-        });
-
-        // Keyboard navigation (Enter or Space)
-        item.addEventListener("keydown", (e) => {
-          if ((e.key === "Enter" || e.key === " ") && e.target === item) {
-            e.preventDefault();
-            window.location.hash = `#/read/${encodeURIComponent(seriesName)}/${encodeURIComponent(ch.name)}`;
-          }
-        });
-
-        chaptersList.appendChild(item);
-      });
+      currentSeriesChapters = chapters;
+      currentSeriesProgressMap = chapterProgressMap;
+      updateChapterOrderUI();
+      renderSeriesChaptersList();
     } catch (err) {
       showError(`Failed to load chapters: ${err.message}`);
       seriesMeta.textContent = "Error loading chapters.";
     }
+  }
+
+  function renderSeriesChaptersList() {
+    if (!chaptersList) return;
+    chaptersList.innerHTML = "";
+    if (!currentSeriesChapters || currentSeriesChapters.length === 0) return;
+
+    const naturalCompare = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+    const sortedChapters = [...currentSeriesChapters].sort((a, b) => {
+      const cmp = naturalCompare(a.name, b.name);
+      return seriesChapterOrder === "desc" ? -cmp : cmp;
+    });
+
+    sortedChapters.forEach((ch) => {
+      const item = document.createElement("div");
+      item.className = "chapter-item";
+      item.setAttribute("role", "button");
+      item.setAttribute("tabindex", "0");
+
+      const isBookmarked = currentSeriesBookmarks.has(ch.name);
+      const hasProgress = currentSeriesProgressMap.has(ch.name);
+      const progressPct = hasProgress ? currentSeriesProgressMap.get(ch.name) : null;
+
+      item.innerHTML = `
+        <div class="chapter-info">
+          <button class="btn-chapter-bookmark ${isBookmarked ? "bookmarked" : ""}" title="${isBookmarked ? "Remove bookmark" : "Bookmark chapter"}" aria-label="${isBookmarked ? "Remove bookmark" : "Bookmark chapter"}">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+            </svg>
+          </button>
+          <span class="chapter-title">${escapeHtml(ch.name)}</span>
+        </div>
+        <div class="chapter-actions">
+          <span class="chapter-progress">${progressPct != null ? `${progressPct}%` : ""}</span>
+          <span class="chapter-pages">${ch.image_count} ${ch.image_count === 1 ? "page" : "pages"}</span>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" class="chapter-arrow">
+            <path d="M9 18l6-6-6-6"/>
+          </svg>
+        </div>
+      `;
+
+      // Bookmark button click
+      const bookmarkBtn = item.querySelector(".btn-chapter-bookmark");
+      bookmarkBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const willBookmark = !currentSeriesBookmarks.has(ch.name);
+        const result = await toggleBookmark(currentSeries, ch.name, willBookmark);
+        if (result) {
+          loadChapters(currentSeries);
+        }
+      });
+
+      // Row click navigates to chapter reader
+      item.addEventListener("click", () => {
+        window.location.hash = `#/read/${encodeURIComponent(currentSeries)}/${encodeURIComponent(ch.name)}`;
+      });
+
+      // Keyboard navigation (Enter or Space)
+      item.addEventListener("keydown", (e) => {
+        if ((e.key === "Enter" || e.key === " ") && e.target === item) {
+          e.preventDefault();
+          window.location.hash = `#/read/${encodeURIComponent(currentSeries)}/${encodeURIComponent(ch.name)}`;
+        }
+      });
+
+      chaptersList.appendChild(item);
+    });
   }
 
   // 3. Load Real Vertical Scroll Reader View with Reading Progress, Bookmark & Navigation
@@ -2128,8 +2266,29 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (librarySort) {
     librarySort.addEventListener("change", (e) => {
-      librarySortMode = e.target.value;
+      librarySortCriterion = e.target.value;
+      saveLibrarySortPreference();
       renderLibrarySeries();
+    });
+  }
+
+  if (librarySortDir) {
+    librarySortDir.addEventListener("click", () => {
+      librarySortDirection = librarySortDirection === "asc" ? "desc" : "asc";
+      updateLibrarySortUI();
+      saveLibrarySortPreference();
+      renderLibrarySeries();
+    });
+  }
+
+  if (btnChapterOrder) {
+    btnChapterOrder.addEventListener("click", () => {
+      seriesChapterOrder = seriesChapterOrder === "asc" ? "desc" : "asc";
+      try {
+        localStorage.setItem("local_manga_chapter_order", seriesChapterOrder);
+      } catch {}
+      updateChapterOrderUI();
+      renderSeriesChaptersList();
     });
   }
 
@@ -2455,6 +2614,8 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Initial load
+  updateLibrarySortUI();
+  updateChapterOrderUI();
   loadSettings();
   loadProfile();
   handleRoute();

@@ -293,11 +293,26 @@ class TestHTTPHandler(unittest.TestCase):
         self.assertIn(b"reader-chapter-pagination", body)
 
     def test_serve_static_index_mark_svg(self):
+        """Verify /index-mark.svg serves valid 本 character favicon with black outline, white fill, transparent bg."""
         headers, body = self._simulate_get("/index-mark.svg")
         self.assertIn("200 OK", headers)
         self.assertIn("image/svg+xml", headers)
-        self.assertIn(b"<svg", body)
-        self.assertIn(b"viewBox", body)
+        svg_text = body.decode("utf-8")
+        self.assertIn("<svg", svg_text)
+        self.assertIn("viewBox", svg_text)
+        # Transparent background (no background rect)
+        self.assertNotIn("<rect", svg_text)
+        # White character with thick black ink outline
+        self.assertIn('fill="#FFFFFF"', svg_text)
+        self.assertIn('stroke="#000000"', svg_text)
+        self.assertIn('stroke-width="8"', svg_text)
+        # Theme independence: no Crimson or Kuromi accents
+        self.assertNotIn("#E53935", svg_text)
+        self.assertNotIn("#9B7EDB", svg_text)
+        self.assertNotIn("var(--accent", svg_text)
+        # No book icon or text
+        self.assertNotIn("<text", svg_text)
+        self.assertNotIn("Book cover", svg_text)
 
     def test_serve_static_js(self):
         headers, body = self._simulate_get("/app.js")
@@ -2787,6 +2802,239 @@ class TestSettingsAndAppearance(unittest.TestCase):
         self.assertIn("applyTheme", js)
         self.assertIn("updateTheme", js)
         self.assertNotIn("applyAppearance", js)
+
+
+class TestLibrarySortChapterOrderAndThemes(unittest.TestCase):
+    def setUp(self):
+        from server import MangaRequestHandler, natural_sort_key
+        self.natural_sort_key = natural_sort_key
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.config_dir = Path(self.temp_dir.name) / "config"
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.orig_config_dir = os.environ.get("LOCAL_MANGA_CONFIG_DIR")
+        os.environ["LOCAL_MANGA_CONFIG_DIR"] = str(self.config_dir)
+
+        self.library_dir = Path(self.temp_dir.name) / "Manga"
+        self.library_dir.mkdir()
+        self.library = MangaLibrary(str(self.library_dir))
+        self.MangaRequestHandler = MangaRequestHandler
+        self.MangaRequestHandler.library = self.library
+
+    def tearDown(self):
+        if self.orig_config_dir is not None:
+            os.environ["LOCAL_MANGA_CONFIG_DIR"] = self.orig_config_dir
+        else:
+            os.environ.pop("LOCAL_MANGA_CONFIG_DIR", None)
+        self.temp_dir.cleanup()
+
+    def _execute_request(self, raw_request: bytes):
+        sock = MockSocket(raw_request)
+        class CustomHandler(self.MangaRequestHandler):
+            def __init__(self, request, client_address, server):
+                self.request = request
+                self.client_address = client_address
+                self.server = server
+                self.setup()
+                try:
+                    self.handle()
+                finally:
+                    self.finish()
+
+            def log_message(self, format, *args):
+                pass
+
+        CustomHandler.library = self.library
+        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler(sock, ("127.0.0.1", 8000), None)
+
+        sock.wfile.seek(0)
+        response_data = sock.wfile.read()
+        header_end = response_data.find(b"\r\n\r\n")
+        headers = response_data[:header_end].decode("utf-8", errors="replace")
+        body = response_data[header_end + 4:]
+        return headers, body
+
+    def _simulate_get(self, path: str):
+        raw = f"GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n".encode("utf-8")
+        return self._execute_request(raw)
+
+    def test_library_sort_ui(self):
+        """Verify unified library sort control (Name, Chapters, Unread) and direction toggle."""
+        _, html_body = self._simulate_get("/")
+        html = html_body.decode("utf-8")
+        self.assertIn('id="library-sort"', html)
+        self.assertIn('<option value="name">Name</option>', html)
+        self.assertIn('<option value="chapters">Chapters</option>', html)
+        self.assertIn('<option value="unread">Unread</option>', html)
+        self.assertIn('id="library-sort-dir"', html)
+        self.assertIn('id="library-sort-arrow"', html)
+        # Old standalone options should no longer exist
+        self.assertNotIn('<option value="az">', html)
+        self.assertNotIn('<option value="za">', html)
+
+        _, css_body = self._simulate_get("/style.css")
+        css = css_body.decode("utf-8")
+        self.assertIn(".library-sort-dir-btn", css)
+        self.assertIn(".library-sort-wrapper", css)
+
+    def test_series_chapter_order_ui(self):
+        """Verify Chapters heading and clickable order toggle arrow on far right."""
+        _, html_body = self._simulate_get("/")
+        html = html_body.decode("utf-8")
+        self.assertIn('<h2 class="chapters-section-title">Chapters</h2>', html)
+        self.assertIn('id="btn-chapter-order"', html)
+        self.assertIn('id="chapter-order-arrow"', html)
+
+        _, css_body = self._simulate_get("/style.css")
+        css = css_body.decode("utf-8")
+        self.assertIn(".chapters-order-toggle-btn", css)
+        self.assertIn("display: flex;", css)
+        self.assertIn("justify-content: space-between;", css)
+        # Ensure text-transform uppercase was removed from chapters-section-title
+        self.assertNotIn(".chapters-section-title {\n  font-size: 0.78rem;\n  text-transform: uppercase;", css)
+
+    def test_theme_series_background_tint(self):
+        """Verify Crimson retains red series background tint while Kuromi uses purple tint via CSS variables."""
+        _, css_body = self._simulate_get("/style.css")
+        css = css_body.decode("utf-8")
+        # CSS variables defined in Crimson and Kuromi
+        self.assertIn("--series-bg-tint-1", css)
+        self.assertIn("--series-bg-tint-2", css)
+        self.assertIn("rgba(229, 57, 53, 0.16)", css)  # Crimson red
+        self.assertIn("rgba(155, 126, 219, 0.18)", css)  # Kuromi purple
+        # Hero overlay references variables
+        self.assertIn("var(--series-bg-tint-1)", css)
+        self.assertIn("var(--series-bg-tint-2)", css)
+
+    def test_kuromi_theme_accent_styles_and_neutral_dark_foundation(self):
+        """Verify neutral dark palette and semantic theme variables for card hovers, glows, and buttons."""
+        _, css_body = self._simulate_get("/style.css")
+        css = css_body.decode("utf-8")
+
+        # Neutral dark foundation (shared by both themes)
+        self.assertIn("--bg: #0E0E0E;", css)
+        self.assertIn("--surface: #151515;", css)
+        self.assertIn("--surface-elevated: #1C1C1C;", css)
+        self.assertIn("--border: #282828;", css)
+        self.assertIn("--border-subtle: #1E1E1E;", css)
+        self.assertNotIn("#0D0B0C", css)
+        self.assertNotIn("#151113", css)
+
+        # Semantic variables defined for card hover border, glows, button accents
+        for var_name in [
+            "--card-hover-border",
+            "--accent-glow",
+            "--progress-current-glow",
+            "--progress-hover-glow",
+            "--accent-border",
+            "--accent-tint",
+        ]:
+            self.assertIn(var_name, css)
+
+        # Crimson values
+        self.assertIn("rgba(229, 57, 53, 0.55)", css)
+        self.assertIn("rgba(255, 77, 77, 0.45)", css)
+
+        # Kuromi values (purple accents)
+        self.assertIn("rgba(155, 126, 219, 0.55)", css)
+        self.assertIn("rgba(177, 154, 232, 0.45)", css)
+
+        # Component selectors use semantic variables instead of hardcoded Crimson
+        self.assertIn(".series-card:hover .series-cover-wrapper {\n  border-color: var(--card-hover-border);", css)
+        self.assertIn(".series-cover-progress-fill {\n  height: 100%;\n  background-color: var(--accent);\n  box-shadow: var(--accent-glow);", css)
+        self.assertIn(".progress-segment.current {\n  background-color: var(--accent-hover);\n  box-shadow: var(--progress-current-glow);", css)
+        self.assertIn("box-shadow: var(--progress-hover-glow) !important;", css)
+        self.assertIn(".btn-edit-metadata:hover {\n  color: var(--accent);\n  border-color: var(--accent-border);\n  background-color: var(--accent-tint);", css)
+        self.assertIn(".btn-file-select:hover,\n.btn-file-select:focus-visible {\n  color: var(--text);\n  border-color: var(--accent-border);\n  background-color: var(--accent-tint);", css)
+        self.assertIn(".reader-image {\n  display: block;\n  width: 100%;\n  height: auto;\n  max-width: 100%;\n  object-fit: contain;\n  margin: 0 auto;\n  padding: 0;\n  border: none;\n  vertical-align: bottom;\n  background-color: var(--bg);\n}", css)
+        self.assertIn(".modal-overlay {\n  position: fixed;\n  inset: 0;\n  background-color: var(--overlay-bg);", css)
+
+    def test_app_js_library_sorting_and_unread_logic(self):
+        """Verify app.js implements name/chapters/unread sorting, unread calculation, and preference persistence."""
+        _, js_body = self._simulate_get("/app.js")
+        js = js_body.decode("utf-8")
+        self.assertIn("librarySortCriterion", js)
+        self.assertIn("librarySortDirection", js)
+        self.assertIn("local_manga_library_sort", js)
+        self.assertIn("unreadCount", js)
+        self.assertIn("updateLibrarySortUI", js)
+
+    def test_app_js_series_chapter_order_logic(self):
+        """Verify app.js implements chapter order toggle, natural sorting, and preference persistence."""
+        _, js_body = self._simulate_get("/app.js")
+        js = js_body.decode("utf-8")
+        self.assertIn("seriesChapterOrder", js)
+        self.assertIn("renderSeriesChaptersList", js)
+        self.assertIn("local_manga_chapter_order", js)
+        self.assertIn("updateChapterOrderUI", js)
+
+    def test_library_sorting_comparator_algorithms(self):
+        """Test sorting algorithm logic: Name (asc/desc), Chapters (asc/desc), Unread (asc/desc), with stable tie-break."""
+        series = [
+            {"name": "Bleach", "chapter_count": 10, "unreadCount": 8},
+            {"name": "Naruto", "chapter_count": 5, "unreadCount": 5},
+            {"name": "Attack on Titan", "chapter_count": 5, "unreadCount": 5},
+            {"name": "One Piece", "chapter_count": 3, "unreadCount": 0},
+        ]
+
+        def sort_series(items, criterion, direction):
+            def natural_cmp(a, b):
+                ka = self.natural_sort_key(a)
+                kb = self.natural_sort_key(b)
+                return -1 if ka < kb else (1 if ka > kb else 0)
+
+            def cmp_fn(a, b):
+                if criterion == "chapters":
+                    c = a.get("chapter_count", 0) - b.get("chapter_count", 0)
+                elif criterion == "unread":
+                    c = a.get("unreadCount", 0) - b.get("unreadCount", 0)
+                else:
+                    c = natural_cmp(a["name"], b["name"])
+
+                if direction == "desc":
+                    c = -c
+
+                if c == 0 and criterion != "name":
+                    return natural_cmp(a["name"], b["name"])
+                return c
+
+            from functools import cmp_to_key
+            return sorted(items, key=cmp_to_key(cmp_fn))
+
+        # 1. Name Ascending: Attack on Titan, Bleach, Naruto, One Piece
+        s1 = sort_series(series, "name", "asc")
+        self.assertEqual([x["name"] for x in s1], ["Attack on Titan", "Bleach", "Naruto", "One Piece"])
+
+        # 2. Name Descending: One Piece, Naruto, Bleach, Attack on Titan
+        s2 = sort_series(series, "name", "desc")
+        self.assertEqual([x["name"] for x in s2], ["One Piece", "Naruto", "Bleach", "Attack on Titan"])
+
+        # 3. Chapters Ascending: One Piece (3), Attack on Titan (5), Naruto (5), Bleach (10)
+        # Note: Attack on Titan and Naruto tie at 5 -> stable alphabetical fallback puts Attack on Titan first
+        s3 = sort_series(series, "chapters", "asc")
+        self.assertEqual([x["name"] for x in s3], ["One Piece", "Attack on Titan", "Naruto", "Bleach"])
+
+        # 4. Chapters Descending: Bleach (10), Attack on Titan (5), Naruto (5), One Piece (3)
+        # Note: Attack on Titan and Naruto tie at 5 -> stable alphabetical fallback puts Attack on Titan first
+        s4 = sort_series(series, "chapters", "desc")
+        self.assertEqual([x["name"] for x in s4], ["Bleach", "Attack on Titan", "Naruto", "One Piece"])
+
+        # 5. Unread Ascending: One Piece (0), Attack on Titan (5), Naruto (5), Bleach (8)
+        s5 = sort_series(series, "unread", "asc")
+        self.assertEqual([x["name"] for x in s5], ["One Piece", "Attack on Titan", "Naruto", "Bleach"])
+
+        # 6. Unread Descending: Bleach (8), Attack on Titan (5), Naruto (5), One Piece (0)
+        s6 = sort_series(series, "unread", "desc")
+        self.assertEqual([x["name"] for x in s6], ["Bleach", "Attack on Titan", "Naruto", "One Piece"])
+
+    def test_series_chapter_order_natural_sort(self):
+        """Test natural sorting ascending and descending on chapter names."""
+        chapters = ["Chapter 10", "Chapter 1", "Chapter 2", "Chapter 003"]
+        sorted_asc = sorted(chapters, key=self.natural_sort_key)
+        self.assertEqual(sorted_asc, ["Chapter 1", "Chapter 2", "Chapter 003", "Chapter 10"])
+
+        sorted_desc = sorted(chapters, key=self.natural_sort_key, reverse=True)
+        self.assertEqual(sorted_desc, ["Chapter 10", "Chapter 003", "Chapter 2", "Chapter 1"])
 
 
 if __name__ == "__main__":
