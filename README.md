@@ -90,36 +90,28 @@ Reader data is stored separately inside each series in a `.reader` folder.
 ## Changing the Library Folder
 
 You can change the manga library folder from the Library page using **Change Manga Folder**.
+Your manga library can be stored anywhere on your computer and does not need to be inside the project folder.
 
 The selected folder is saved locally so you don't have to choose it every time you launch the app.
 
-Your manga files are never copied into the project.
-
 ## Reading
 
-### Spaced
-
-Adds space between pages, suitable for traditional manga.
-
-### Seamless
-
-Removes gaps between pages for continuous scrolling, suitable for manhwa/webtoons.
-
-Reading progress is saved automatically and the reader resumes from the last page you reached.
+- **Spaced mode**: Pages have gaps between them, suited for traditional manga.
+- **Seamless mode**: Pages form one continuous vertical strip, suited for webtoons and manhwa.
+- Reading progress is saved automatically as you scroll.
+- Bookmarks can be added while reading to quickly return to specific pages.
 
 ## Data & Privacy
 
-This app runs locally.
-
-Your manga files, reading progress, bookmarks, and series metadata stay on your computer.
-
-No account or cloud service is required.
+- The app runs entirely on your local machine.
+- Your manga files are never copied, moved, or modified.
+- Reading progress, bookmarks, and series metadata are stored locally inside each series' `.reader` folder.
 
 ## Troubleshooting
 
 If the app does not open:
 
-- Make sure Python 3 is installed.
-- Make sure your selected manga library folder still exists.
-- Try launching the platform-specific script again.
-- Check the terminal window for error messages.
+- **Python 3 is not installed**: Install Python 3 and ensure it is available in your command line / PATH.
+- **Launcher permission (macOS / Linux)**: If running the script gives a permission error, make it executable:
+  - macOS: `chmod +x start-mac.command`
+  - Linux: `chmod +x start-linux.sh`
