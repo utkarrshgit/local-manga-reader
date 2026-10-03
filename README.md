@@ -24,7 +24,7 @@ A local manga and manhwa reader that runs in your web browser.
 
 ![Reader](https://raw.githubusercontent.com/utkarrshgit/temp_media/refs/heads/main/local_manga_reader/Screenshot%203.png?token=GHSAT0AAAAAAEK4KANX5ZPSNSY3SY3V2HMQ2WAK3JQ)
 
-![Reading demo](https://raw.githubusercontent.com/utkarrshgit/temp_media/refs/heads/main/local_manga_reader/demo.gif?token=GHSAT0AAAAAAEK4KANWU2SDDSTBO7GX75EA2WAK3QQ)
+![Reading demo](https://github.com/utkarrshgit/temp_media/raw/refs/heads/main/local_manga_reader/demo.webm)
 
 ## Quick Start
 
