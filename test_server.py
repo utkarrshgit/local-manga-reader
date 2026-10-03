@@ -252,7 +252,8 @@ class TestHTTPHandler(unittest.TestCase):
         headers, body = self._simulate_get("/")
         self.assertIn("200 OK", headers)
         self.assertIn("text/html", headers)
-        self.assertIn(b"Manga Reader", body)
+        self.assertIn(b"<title>{ index }</title>", body)
+        self.assertIn(b'href="/index-mark.svg"', body)
         # Phase 3 reader elements
         self.assertIn(b"view-reader", body)
         self.assertIn(b"reader-container", body)
@@ -288,6 +289,13 @@ class TestHTTPHandler(unittest.TestCase):
         self.assertIn(b"btn-fullscreen", body)
         self.assertIn(b"btn-chapter-nav", body)
         self.assertIn(b"reader-chapter-pagination", body)
+
+    def test_serve_static_index_mark_svg(self):
+        headers, body = self._simulate_get("/index-mark.svg")
+        self.assertIn("200 OK", headers)
+        self.assertIn("image/svg+xml", headers)
+        self.assertIn(b"<svg", body)
+        self.assertIn(b"viewBox", body)
 
     def test_serve_static_js(self):
         headers, body = self._simulate_get("/app.js")
@@ -1590,7 +1598,7 @@ fi
                 saved = f.read().strip()
             self.assertEqual(saved, lib1)
             with open(open_log) as f:
-                self.assertIn("-a Safari http://127.0.0.1:8000", f.read())
+                self.assertIn("-a Safari http://localhost:8000", f.read())
             with open(server_log) as f:
                 slog = f.read()
                 self.assertIn(f"--dir {lib1}", slog)

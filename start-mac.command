@@ -12,7 +12,7 @@ cd "$PROJECT_DIR" || {
 
 # 2. Port configuration
 PORT="${PORT:-8000}"
-SERVER_URL="http://127.0.0.1:${PORT}"
+SERVER_URL="http://localhost:${PORT}"
 
 # 3. Check for Python 3
 if ! command -v python3 >/dev/null 2>&1; then
