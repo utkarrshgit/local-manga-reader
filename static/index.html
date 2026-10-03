@@ -32,6 +32,45 @@
         </a>
         <button type="button" class="header-series-title" id="header-series-title" title="Scroll to top" aria-label="Scroll series to top"></button>
       </div>
+
+      <!-- User Profile Control (Far-right) -->
+      <div class="header-profile-wrapper" id="header-profile-wrapper">
+        <button type="button" class="header-profile-btn" id="header-profile-btn" aria-haspopup="true" aria-expanded="false" aria-label="User profile and settings">
+          <span class="header-avatar-circle" id="header-avatar-circle">
+            <svg class="header-avatar-icon" id="header-avatar-default" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+            <img class="header-avatar-img hidden" id="header-avatar-img" alt="Avatar" />
+          </span>
+          <span class="header-profile-name" id="header-profile-name">User</span>
+        </button>
+
+        <!-- Dropdown Menu -->
+        <div class="profile-dropdown hidden" id="profile-dropdown" role="menu" aria-label="Profile and settings menu">
+          <div class="profile-dropdown-header">
+            <div class="profile-dropdown-user-info">
+              <span class="profile-dropdown-name" id="profile-dropdown-name">User</span>
+              <span class="profile-dropdown-status">Local Profile</span>
+            </div>
+          </div>
+          <div class="profile-dropdown-divider"></div>
+          <button type="button" class="profile-dropdown-item" id="dropdown-item-profile" role="menuitem">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+            <span>Edit Profile</span>
+          </button>
+          <button type="button" class="profile-dropdown-item" id="dropdown-item-settings" role="menuitem">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+            <span>Settings</span>
+          </button>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -69,12 +108,6 @@
                 <option value="chapters">Chapters</option>
               </select>
             </div>
-            <button type="button" id="btn-change-folder" class="btn-change-folder" title="Change manga library folder" aria-label="Change manga folder">
-              <svg class="folder-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-              </svg>
-              <span>Change folder</span>
-            </button>
           </div>
         </div>
       </div>
@@ -383,6 +416,114 @@
       </div>
     </section>
   </main>
+
+  <!-- Modal Backdrop Overlay -->
+  <div class="modal-overlay hidden" id="modal-overlay" aria-hidden="true"></div>
+
+  <!-- Profile Modal -->
+  <div class="app-modal hidden" id="modal-profile" role="dialog" aria-modal="true" aria-labelledby="modal-profile-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title" id="modal-profile-title">Edit Profile</h2>
+        <button type="button" class="modal-close-btn" id="btn-close-profile-modal" aria-label="Close dialog">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6 6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="profile-modal-avatar-section">
+          <div class="profile-modal-avatar-preview-wrapper" id="profile-modal-avatar-wrapper">
+            <svg class="profile-modal-avatar-default" id="profile-modal-avatar-default" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+              <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+            <img class="profile-modal-avatar-img hidden" id="profile-modal-avatar-img" alt="Avatar preview" />
+          </div>
+          <div class="profile-modal-avatar-controls">
+            <label class="btn-file-select" for="profile-avatar-input" tabindex="0">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              <span>Choose photo</span>
+            </label>
+            <input type="file" id="profile-avatar-input" class="editor-file-input" accept="image/jpeg,image/png,image/webp,image/gif,image/avif,image/bmp" />
+            <button type="button" class="btn-remove-image hidden" id="btn-remove-avatar" title="Remove custom avatar">
+              Remove
+            </button>
+            <span class="editor-file-hint">JPG, PNG, WebP, GIF, AVIF or BMP</span>
+          </div>
+        </div>
+
+        <div class="modal-field">
+          <label for="profile-name-input" class="editor-label">Display Name</label>
+          <input type="text" id="profile-name-input" class="editor-input" placeholder="User" maxlength="50" autocomplete="off" spellcheck="false" />
+        </div>
+
+        <div id="profile-modal-error" class="editor-error hidden" role="alert"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-cancel-profile">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-save-profile">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div class="app-modal hidden" id="modal-settings" role="dialog" aria-modal="true" aria-labelledby="modal-settings-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title" id="modal-settings-title">Settings</h2>
+        <button type="button" class="modal-close-btn" id="btn-close-settings-modal" aria-label="Close dialog">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6 6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <!-- Themes Section -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <h3 class="settings-section-title">Theme</h3>
+            <span class="settings-section-hint">Accent color</span>
+          </div>
+          <div class="settings-options-group" id="settings-theme-group" role="radiogroup" aria-label="Theme">
+            <button type="button" class="settings-option-btn active" data-theme-val="crimson" role="radio" aria-checked="true">
+              <span class="settings-theme-swatch swatch-crimson" aria-hidden="true"></span>
+              <span>Crimson</span>
+            </button>
+            <button type="button" class="settings-option-btn" data-theme-val="kuromi" role="radio" aria-checked="false">
+              <span class="settings-theme-swatch swatch-kuromi" aria-hidden="true"></span>
+              <span>Kuromi</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Manga Library Section -->
+        <div class="settings-section">
+          <h3 class="settings-section-title">Manga Library</h3>
+          <p class="settings-section-desc">Folder location where your manga series and chapters are stored on your local disk.</p>
+          <div class="settings-path-box">
+            <span class="settings-path-label">Current Folder</span>
+            <code class="settings-path-value" id="settings-library-path">Loading...</code>
+          </div>
+          <div class="settings-actions">
+            <button type="button" id="btn-change-folder" class="btn-change-folder" title="Change manga library folder" aria-label="Change manga folder">
+              <svg class="folder-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+              </svg>
+              <span>Change folder</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-close-settings">Done</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/app.js"></script>
 </body>

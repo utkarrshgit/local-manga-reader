@@ -21,6 +21,33 @@ document.addEventListener("DOMContentLoaded", () => {
   const unavailableFolderPath = document.getElementById("unavailable-folder-path");
   const btnReconnectFolder = document.getElementById("btn-reconnect-folder");
 
+  // DOM Elements - Profile & Settings
+  const headerProfileBtn = document.getElementById("header-profile-btn");
+  const headerAvatarDefault = document.getElementById("header-avatar-default");
+  const headerAvatarImg = document.getElementById("header-avatar-img");
+  const headerProfileName = document.getElementById("header-profile-name");
+  const profileDropdown = document.getElementById("profile-dropdown");
+  const profileDropdownName = document.getElementById("profile-dropdown-name");
+  const dropdownItemProfile = document.getElementById("dropdown-item-profile");
+  const dropdownItemSettings = document.getElementById("dropdown-item-settings");
+
+  const modalOverlay = document.getElementById("modal-overlay");
+  const modalProfile = document.getElementById("modal-profile");
+  const btnCloseProfileModal = document.getElementById("btn-close-profile-modal");
+  const profileModalAvatarDefault = document.getElementById("profile-modal-avatar-default");
+  const profileModalAvatarImg = document.getElementById("profile-modal-avatar-img");
+  const profileAvatarInput = document.getElementById("profile-avatar-input");
+  const btnRemoveAvatar = document.getElementById("btn-remove-avatar");
+  const profileNameInput = document.getElementById("profile-name-input");
+  const profileModalError = document.getElementById("profile-modal-error");
+  const btnCancelProfile = document.getElementById("btn-cancel-profile");
+  const btnSaveProfile = document.getElementById("btn-save-profile");
+
+  const modalSettings = document.getElementById("modal-settings");
+  const btnCloseSettingsModal = document.getElementById("btn-close-settings-modal");
+  const btnCloseSettings = document.getElementById("btn-close-settings");
+  const settingsLibraryPath = document.getElementById("settings-library-path");
+
   // DOM Elements - Chapters & Metadata
   const chaptersList = document.getElementById("chapters-list");
   const chaptersEmpty = document.getElementById("chapters-empty");
@@ -277,6 +304,286 @@ document.addEventListener("DOMContentLoaded", () => {
   function clearError() {
     statusBanner.textContent = "";
     statusBanner.classList.add("hidden");
+  }
+
+  // Profile State
+  let currentProfile = {
+    name: "User",
+    has_avatar: false,
+    avatar_url: null
+  };
+  let pendingAvatarBase64 = null;
+  let pendingRemoveAvatar = false;
+
+  function updateProfileUI(profile) {
+    if (!profile) return;
+    currentProfile = {
+      name: profile.name || "User",
+      has_avatar: Boolean(profile.has_avatar),
+      avatar_url: profile.avatar_url || (profile.has_avatar ? "/api/profile/avatar" : null)
+    };
+
+    if (headerProfileName) {
+      headerProfileName.textContent = currentProfile.name;
+    }
+    if (profileDropdownName) {
+      profileDropdownName.textContent = currentProfile.name;
+    }
+
+    if (currentProfile.has_avatar && currentProfile.avatar_url) {
+      const avatarSrc = `${currentProfile.avatar_url}?t=${Date.now()}`;
+      if (headerAvatarImg) {
+        headerAvatarImg.src = avatarSrc;
+        headerAvatarImg.classList.remove("hidden");
+      }
+      if (headerAvatarDefault) {
+        headerAvatarDefault.classList.add("hidden");
+      }
+    } else {
+      if (headerAvatarImg) {
+        headerAvatarImg.src = "";
+        headerAvatarImg.classList.add("hidden");
+      }
+      if (headerAvatarDefault) {
+        headerAvatarDefault.classList.remove("hidden");
+      }
+    }
+  }
+
+  // Settings State (Theme: crimson/kuromi)
+  let currentSettings = {
+    theme: "crimson"
+  };
+
+  function applyTheme(themeId) {
+    const validTheme = (themeId === "kuromi") ? "kuromi" : "crimson";
+    currentSettings.theme = validTheme;
+    document.documentElement.setAttribute("data-theme", validTheme);
+
+    document.querySelectorAll("#settings-theme-group .settings-option-btn").forEach((btn) => {
+      const val = btn.getAttribute("data-theme-val");
+      const isActive = val === validTheme;
+      btn.classList.toggle("active", isActive);
+      btn.setAttribute("aria-checked", isActive ? "true" : "false");
+    });
+  }
+
+  function applySettings(settings) {
+    if (!settings) return;
+    if (settings.theme) applyTheme(settings.theme);
+  }
+
+  async function loadSettings() {
+    // 1. Immediately apply cached settings to avoid flash
+    try {
+      const cached = localStorage.getItem("local_manga_settings");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        applySettings(parsed);
+      }
+    } catch {}
+
+    // 2. Fetch authoritative settings from server
+    try {
+      const res = await fetch("/api/settings");
+      if (res.ok) {
+        const data = await res.json();
+        applySettings(data);
+        try {
+          localStorage.setItem("local_manga_settings", JSON.stringify(data));
+        } catch {}
+      }
+    } catch {}
+  }
+
+  async function updateTheme(themeId) {
+    applyTheme(themeId);
+
+    try {
+      localStorage.setItem("local_manga_settings", JSON.stringify(currentSettings));
+    } catch {}
+
+    try {
+      await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ theme: currentSettings.theme })
+      });
+    } catch (err) {
+      console.error("Failed to save theme setting to server:", err);
+    }
+  }
+
+  async function loadProfile() {
+    try {
+      const res = await fetch("/api/profile");
+      if (res.ok) {
+        const data = await res.json();
+        updateProfileUI(data);
+        try {
+          localStorage.setItem("local_manga_profile", JSON.stringify(data));
+        } catch {}
+        return;
+      }
+    } catch {}
+
+    // Fallback to localStorage if offline/error
+    try {
+      const saved = localStorage.getItem("local_manga_profile");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        updateProfileUI(parsed);
+        return;
+      }
+    } catch {}
+
+    updateProfileUI({ name: "User", has_avatar: false, avatar_url: null });
+  }
+
+  function toggleProfileDropdown(force) {
+    if (!profileDropdown) return;
+    const isCurrentlyOpen = !profileDropdown.classList.contains("hidden");
+    const nextOpen = typeof force === "boolean" ? force : !isCurrentlyOpen;
+
+    if (nextOpen) {
+      profileDropdown.classList.remove("hidden");
+      if (headerProfileBtn) headerProfileBtn.setAttribute("aria-expanded", "true");
+    } else {
+      profileDropdown.classList.add("hidden");
+      if (headerProfileBtn) headerProfileBtn.setAttribute("aria-expanded", "false");
+    }
+  }
+
+  function closeAllModals() {
+    if (modalProfile) modalProfile.classList.add("hidden");
+    if (modalSettings) modalSettings.classList.add("hidden");
+    if (modalOverlay) modalOverlay.classList.add("hidden");
+    toggleProfileDropdown(false);
+  }
+
+  function openProfileModal() {
+    toggleProfileDropdown(false);
+    pendingAvatarBase64 = null;
+    pendingRemoveAvatar = false;
+
+    if (profileNameInput) {
+      profileNameInput.value = currentProfile.name || "User";
+    }
+    if (profileAvatarInput) {
+      profileAvatarInput.value = "";
+    }
+    if (profileModalError) {
+      profileModalError.textContent = "";
+      profileModalError.classList.add("hidden");
+    }
+
+    if (currentProfile.has_avatar && currentProfile.avatar_url) {
+      if (profileModalAvatarImg) {
+        profileModalAvatarImg.src = `${currentProfile.avatar_url}?t=${Date.now()}`;
+        profileModalAvatarImg.classList.remove("hidden");
+      }
+      if (profileModalAvatarDefault) {
+        profileModalAvatarDefault.classList.add("hidden");
+      }
+      if (btnRemoveAvatar) {
+        btnRemoveAvatar.classList.remove("hidden");
+      }
+    } else {
+      if (profileModalAvatarImg) {
+        profileModalAvatarImg.src = "";
+        profileModalAvatarImg.classList.add("hidden");
+      }
+      if (profileModalAvatarDefault) {
+        profileModalAvatarDefault.classList.remove("hidden");
+      }
+      if (btnRemoveAvatar) {
+        btnRemoveAvatar.classList.add("hidden");
+      }
+    }
+
+    if (modalSettings) modalSettings.classList.add("hidden");
+    if (modalOverlay) modalOverlay.classList.remove("hidden");
+    if (modalProfile) modalProfile.classList.remove("hidden");
+    if (profileNameInput) profileNameInput.focus();
+  }
+
+  async function openSettingsModal() {
+    toggleProfileDropdown(false);
+    if (modalProfile) modalProfile.classList.add("hidden");
+
+    applySettings(currentSettings);
+
+    if (settingsLibraryPath) {
+      settingsLibraryPath.textContent = "Loading...";
+      try {
+        const res = await fetch("/api/library");
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.library_path) {
+            settingsLibraryPath.textContent = data.library_path;
+          }
+        }
+      } catch {
+        settingsLibraryPath.textContent = "Unavailable";
+      }
+    }
+
+    if (modalOverlay) modalOverlay.classList.remove("hidden");
+    if (modalSettings) modalSettings.classList.remove("hidden");
+  }
+
+  async function saveProfile() {
+    if (!btnSaveProfile) return;
+    btnSaveProfile.disabled = true;
+    if (profileModalError) {
+      profileModalError.textContent = "";
+      profileModalError.classList.add("hidden");
+    }
+
+    const newName = profileNameInput ? profileNameInput.value.trim() || "User" : "User";
+    const payload = {
+      name: newName,
+      remove_avatar: pendingRemoveAvatar
+    };
+    if (pendingAvatarBase64) {
+      payload.avatar = pendingAvatarBase64;
+    }
+
+    try {
+      const res = await fetch("/api/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        let errMsg = `Failed to save profile (${res.status})`;
+        try {
+          const errData = await res.json();
+          if (errData && errData.error) errMsg = errData.error;
+        } catch {}
+        if (profileModalError) {
+          profileModalError.textContent = errMsg;
+          profileModalError.classList.remove("hidden");
+        }
+        return;
+      }
+
+      const updated = await res.json();
+      updateProfileUI(updated);
+      try {
+        localStorage.setItem("local_manga_profile", JSON.stringify(updated));
+      } catch {}
+      closeAllModals();
+      showSuccess("Profile saved");
+    } catch (err) {
+      if (profileModalError) {
+        profileModalError.textContent = `Error saving profile: ${err.message}`;
+        profileModalError.classList.remove("hidden");
+      }
+    } finally {
+      if (btnSaveProfile) btnSaveProfile.disabled = false;
+    }
   }
 
   // Series Detail Page: Scroll-based Hero & Header Transition
@@ -750,6 +1057,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (data.success) {
         showSuccess(`Manga folder updated: ${data.library_path}`);
+        if (settingsLibraryPath) {
+          settingsLibraryPath.textContent = data.library_path;
+        }
         await loadLibrary();
       }
     } catch (err) {
@@ -2011,6 +2321,141 @@ document.addEventListener("DOMContentLoaded", () => {
     btnReconnectFolder.addEventListener("click", changeMangaFolder);
   }
 
+  // Profile Header Control & Dropdown Events
+  if (headerProfileBtn) {
+    headerProfileBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleProfileDropdown();
+    });
+  }
+
+  if (dropdownItemProfile) {
+    dropdownItemProfile.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openProfileModal();
+    });
+  }
+
+  if (dropdownItemSettings) {
+    dropdownItemSettings.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openSettingsModal();
+    });
+  }
+
+  // Modal Backdrop & Close Events
+  if (modalOverlay) {
+    modalOverlay.addEventListener("click", () => {
+      closeAllModals();
+    });
+  }
+
+  if (btnCloseProfileModal) {
+    btnCloseProfileModal.addEventListener("click", closeAllModals);
+  }
+  if (btnCancelProfile) {
+    btnCancelProfile.addEventListener("click", closeAllModals);
+  }
+  if (btnSaveProfile) {
+    btnSaveProfile.addEventListener("click", saveProfile);
+  }
+
+  if (btnCloseSettingsModal) {
+    btnCloseSettingsModal.addEventListener("click", closeAllModals);
+  }
+  if (btnCloseSettings) {
+    btnCloseSettings.addEventListener("click", closeAllModals);
+  }
+
+  // Profile Avatar Upload & Removal
+  if (profileAvatarInput) {
+    profileAvatarInput.addEventListener("change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+
+      if (!file.type.startsWith("image/")) {
+        if (profileModalError) {
+          profileModalError.textContent = "Please select a valid image file.";
+          profileModalError.classList.remove("hidden");
+        }
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (loadEvent) => {
+        pendingAvatarBase64 = loadEvent.target.result;
+        pendingRemoveAvatar = false;
+        if (profileModalAvatarImg) {
+          profileModalAvatarImg.src = pendingAvatarBase64;
+          profileModalAvatarImg.classList.remove("hidden");
+        }
+        if (profileModalAvatarDefault) {
+          profileModalAvatarDefault.classList.add("hidden");
+        }
+        if (btnRemoveAvatar) {
+          btnRemoveAvatar.classList.remove("hidden");
+        }
+        if (profileModalError) {
+          profileModalError.textContent = "";
+          profileModalError.classList.add("hidden");
+        }
+      };
+      reader.onerror = () => {
+        if (profileModalError) {
+          profileModalError.textContent = "Failed to read image file.";
+          profileModalError.classList.remove("hidden");
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  if (btnRemoveAvatar) {
+    btnRemoveAvatar.addEventListener("click", () => {
+      pendingAvatarBase64 = null;
+      pendingRemoveAvatar = true;
+      if (profileAvatarInput) profileAvatarInput.value = "";
+      if (profileModalAvatarImg) {
+        profileModalAvatarImg.src = "";
+        profileModalAvatarImg.classList.add("hidden");
+      }
+      if (profileModalAvatarDefault) {
+        profileModalAvatarDefault.classList.remove("hidden");
+      }
+      btnRemoveAvatar.classList.add("hidden");
+    });
+  }
+
+  // Click outside to close dropdown
+  document.addEventListener("click", (e) => {
+    if (profileDropdown && !profileDropdown.classList.contains("hidden")) {
+      if (!profileDropdown.contains(e.target) && !headerProfileBtn.contains(e.target)) {
+        toggleProfileDropdown(false);
+      }
+    }
+  });
+
+  // Escape key to dismiss dropdown or modals
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      if (profileDropdown && !profileDropdown.classList.contains("hidden")) {
+        toggleProfileDropdown(false);
+      } else if (modalOverlay && !modalOverlay.classList.contains("hidden")) {
+        closeAllModals();
+      }
+    }
+  });
+
+  // Settings Theme Option Listeners
+  document.querySelectorAll("#settings-theme-group .settings-option-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const val = btn.getAttribute("data-theme-val");
+      if (val) updateTheme(val);
+    });
+  });
+
   // Initial load
+  loadSettings();
+  loadProfile();
   handleRoute();
 });

@@ -1,4 +1,5 @@
 import unittest
+import io
 from pathlib import Path
 import tempfile
 import shutil
@@ -2422,6 +2423,373 @@ class TestArchiveAndFlexibleDiscovery(unittest.TestCase):
         self.assertEqual(body, b"C2")
 
 
+class TestUserProfile(unittest.TestCase):
+    def setUp(self):
+        import io
+        from server import MangaRequestHandler
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.config_dir = Path(self.temp_dir.name) / "config"
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.orig_config_dir = os.environ.get("LOCAL_MANGA_CONFIG_DIR")
+        os.environ["LOCAL_MANGA_CONFIG_DIR"] = str(self.config_dir)
+
+        # Set up a dummy library
+        self.library_dir = Path(self.temp_dir.name) / "Manga"
+        self.library_dir.mkdir()
+        self.library = MangaLibrary(str(self.library_dir))
+        self.MangaRequestHandler = MangaRequestHandler
+        self.MangaRequestHandler.library = self.library
+
+        # Valid 1x1 GIF bytes for avatar test
+        self.sample_avatar = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
+
+    def tearDown(self):
+        if self.orig_config_dir is not None:
+            os.environ["LOCAL_MANGA_CONFIG_DIR"] = self.orig_config_dir
+        else:
+            os.environ.pop("LOCAL_MANGA_CONFIG_DIR", None)
+        self.temp_dir.cleanup()
+
+    def _execute_request(self, raw_request: bytes):
+        sock = MockSocket(raw_request)
+        class CustomHandler(self.MangaRequestHandler):
+            def __init__(self, request, client_address, server):
+                self.request = request
+                self.client_address = client_address
+                self.server = server
+                self.setup()
+                try:
+                    self.handle()
+                finally:
+                    self.finish()
+
+            def log_message(self, format, *args):
+                pass
+
+        CustomHandler.library = self.library
+        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler(sock, ("127.0.0.1", 8000), None)
+
+        sock.wfile.seek(0)
+        response_data = sock.wfile.read()
+        header_end = response_data.find(b"\r\n\r\n")
+        headers = response_data[:header_end].decode("utf-8", errors="replace")
+        body = response_data[header_end + 4:]
+        return headers, body
+
+    def _simulate_get(self, path: str):
+        raw = f"GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n".encode("utf-8")
+        return self._execute_request(raw)
+
+    def _simulate_post(self, path: str, payload: dict | bytes, content_type: str = "application/json"):
+        if isinstance(payload, dict):
+            body_bytes = json.dumps(payload).encode("utf-8")
+        else:
+            body_bytes = payload
+        raw = (
+            f"POST {path} HTTP/1.1\r\n"
+            f"Host: localhost\r\n"
+            f"Content-Type: {content_type}\r\n"
+            f"Content-Length: {len(body_bytes)}\r\n\r\n"
+        ).encode("utf-8") + body_bytes
+        return self._execute_request(raw)
+
+    def _simulate_delete(self, path: str):
+        raw = f"DELETE {path} HTTP/1.1\r\nHost: localhost\r\n\r\n".encode("utf-8")
+        return self._execute_request(raw)
+
+    def test_default_profile(self):
+        """GET /api/profile returns default 'User' profile with no avatar."""
+        headers, body = self._simulate_get("/api/profile")
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(data["name"], "User")
+        self.assertFalse(data["has_avatar"])
+        self.assertIsNone(data["avatar_url"])
+
+    def test_update_display_name(self):
+        """POST /api/profile updates user display name and persists across requests."""
+        headers, body = self._simulate_post("/api/profile", {"name": "Luffy"})
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(data["name"], "Luffy")
+
+        # Verify persistence via GET
+        headers2, body2 = self._simulate_get("/api/profile")
+        data2 = json.loads(body2.decode("utf-8"))
+        self.assertEqual(data2["name"], "Luffy")
+
+    def test_upload_and_serve_avatar(self):
+        """Upload avatar via POST /api/profile and serve via GET /api/profile/avatar."""
+        import base64
+        b64_avatar = base64.b64encode(self.sample_avatar).decode("utf-8")
+        headers, body = self._simulate_post("/api/profile", {
+            "name": "Zoro",
+            "avatar": f"data:image/gif;base64,{b64_avatar}"
+        })
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(data["name"], "Zoro")
+        self.assertTrue(data["has_avatar"])
+        self.assertEqual(data["avatar_url"], "/api/profile/avatar")
+
+        # GET avatar image
+        h_av, b_av = self._simulate_get("/api/profile/avatar")
+        self.assertIn("200 OK", h_av)
+        self.assertIn("image/gif", h_av)
+        self.assertEqual(b_av, self.sample_avatar)
+
+    def test_remove_avatar(self):
+        """Remove avatar via POST /api/profile with remove_avatar: true and DELETE /api/profile/avatar."""
+        import base64
+        b64_avatar = base64.b64encode(self.sample_avatar).decode("utf-8")
+        self._simulate_post("/api/profile", {"avatar": b64_avatar})
+
+        # Remove via POST
+        headers, body = self._simulate_post("/api/profile", {"remove_avatar": True})
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        self.assertFalse(data["has_avatar"])
+        self.assertIsNone(data["avatar_url"])
+
+        # Avatar endpoint now returns 404
+        h_av, _ = self._simulate_get("/api/profile/avatar")
+        self.assertIn("404", h_av)
+
+        # Re-upload and remove via DELETE
+        self._simulate_post("/api/profile", {"avatar": b64_avatar})
+        h_del, b_del = self._simulate_delete("/api/profile/avatar")
+        self.assertIn("200 OK", h_del)
+        data_del = json.loads(b_del.decode("utf-8"))
+        self.assertFalse(data_del["has_avatar"])
+
+    def test_profile_and_settings_ui_elements(self):
+        """Verify UI elements for profile control, dropdown, and settings modal."""
+        _, html_body = self._simulate_get("/")
+        html = html_body.decode("utf-8")
+
+        # Header profile elements
+        self.assertIn('id="header-profile-btn"', html)
+        self.assertIn('id="header-avatar-circle"', html)
+        self.assertIn('id="header-avatar-default"', html)
+        self.assertIn('id="header-avatar-img"', html)
+        self.assertIn('id="header-profile-name"', html)
+
+        # Dropdown elements
+        self.assertIn('id="profile-dropdown"', html)
+        self.assertIn('id="dropdown-item-profile"', html)
+        self.assertIn('id="dropdown-item-settings"', html)
+
+        # Modals
+        self.assertIn('id="modal-overlay"', html)
+        self.assertIn('id="modal-profile"', html)
+        self.assertIn('id="modal-settings"', html)
+        self.assertIn('id="profile-name-input"', html)
+        self.assertIn('id="profile-avatar-input"', html)
+        self.assertIn('id="btn-save-profile"', html)
+        self.assertIn('id="btn-change-folder"', html)
+        self.assertIn('id="settings-library-path"', html)
+
+        # CSS checks
+        _, css_body = self._simulate_get("/style.css")
+        css = css_body.decode("utf-8")
+        self.assertIn(".header-profile-btn", css)
+        self.assertIn(".header-avatar-circle", css)
+        self.assertIn(".profile-dropdown", css)
+        self.assertIn(".modal-overlay", css)
+        self.assertIn(".app-modal", css)
+
+        # JS checks
+        _, js_body = self._simulate_get("/app.js")
+        js = js_body.decode("utf-8")
+        self.assertIn("loadProfile", js)
+        self.assertIn("updateProfileUI", js)
+        self.assertIn("toggleProfileDropdown", js)
+        self.assertIn("openProfileModal", js)
+        self.assertIn("openSettingsModal", js)
+        self.assertIn("saveProfile", js)
+
+
+class TestSettingsAndAppearance(unittest.TestCase):
+    def setUp(self):
+        import io
+        from server import MangaRequestHandler
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.config_dir = Path(self.temp_dir.name) / "config"
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.orig_config_dir = os.environ.get("LOCAL_MANGA_CONFIG_DIR")
+        os.environ["LOCAL_MANGA_CONFIG_DIR"] = str(self.config_dir)
+
+        self.library_dir = Path(self.temp_dir.name) / "Manga"
+        self.library_dir.mkdir()
+        self.library = MangaLibrary(str(self.library_dir))
+        self.MangaRequestHandler = MangaRequestHandler
+        self.MangaRequestHandler.library = self.library
+
+    def tearDown(self):
+        if self.orig_config_dir is not None:
+            os.environ["LOCAL_MANGA_CONFIG_DIR"] = self.orig_config_dir
+        else:
+            os.environ.pop("LOCAL_MANGA_CONFIG_DIR", None)
+        self.temp_dir.cleanup()
+
+    def _execute_request(self, raw_request: bytes):
+        sock = MockSocket(raw_request)
+        class CustomHandler(self.MangaRequestHandler):
+            def __init__(self, request, client_address, server):
+                self.request = request
+                self.client_address = client_address
+                self.server = server
+                self.setup()
+                try:
+                    self.handle()
+                finally:
+                    self.finish()
+
+            def log_message(self, format, *args):
+                pass
+
+        CustomHandler.library = self.library
+        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler(sock, ("127.0.0.1", 8000), None)
+
+        sock.wfile.seek(0)
+        response_data = sock.wfile.read()
+        header_end = response_data.find(b"\r\n\r\n")
+        headers = response_data[:header_end].decode("utf-8", errors="replace")
+        body = response_data[header_end + 4:]
+        return headers, body
+
+    def _simulate_get(self, path: str):
+        raw = f"GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n".encode("utf-8")
+        return self._execute_request(raw)
+
+    def _simulate_post(self, path: str, payload: dict | bytes, content_type: str = "application/json"):
+        if isinstance(payload, dict):
+            body_bytes = json.dumps(payload).encode("utf-8")
+        else:
+            body_bytes = payload
+        raw = (
+            f"POST {path} HTTP/1.1\r\n"
+            f"Host: localhost\r\n"
+            f"Content-Type: {content_type}\r\n"
+            f"Content-Length: {len(body_bytes)}\r\n\r\n"
+        ).encode("utf-8") + body_bytes
+        return self._execute_request(raw)
+
+    def test_default_settings(self):
+        """GET /api/settings returns default { theme: 'crimson' }."""
+        headers, body = self._simulate_get("/api/settings")
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        self.assertNotIn("appearance", data)
+        self.assertEqual(data["theme"], "crimson")
+
+    def test_update_valid_theme(self):
+        """POST /api/settings successfully updates theme."""
+        # Update theme to kuromi
+        h1, b1 = self._simulate_post("/api/settings", {"theme": "kuromi"})
+        self.assertIn("200 OK", h1)
+        d1 = json.loads(b1.decode("utf-8"))
+        self.assertEqual(d1["theme"], "kuromi")
+        self.assertNotIn("appearance", d1)
+
+        # Verify disk persistence has only theme
+        settings_file = self.config_dir / "settings.json"
+        disk_data = json.loads(settings_file.read_text(encoding="utf-8"))
+        self.assertEqual(disk_data, {"theme": "kuromi"})
+
+        # Verify persistence via GET
+        h2, b2 = self._simulate_get("/api/settings")
+        d2 = json.loads(b2.decode("utf-8"))
+        self.assertEqual(d2["theme"], "kuromi")
+
+        # Update back to crimson
+        h3, b3 = self._simulate_post("/api/settings", {"theme": "crimson"})
+        self.assertIn("200 OK", h3)
+        d3 = json.loads(b3.decode("utf-8"))
+        self.assertEqual(d3["theme"], "crimson")
+
+    def test_invalid_settings_rejected(self):
+        """POST /api/settings rejects invalid values with 400 Bad Request."""
+        h1, _ = self._simulate_post("/api/settings", {"theme": "neon-green"})
+        self.assertIn("400 Bad Request", h1)
+
+        h2, _ = self._simulate_post("/api/settings", {"appearance": "dark"})
+        self.assertIn("400 Bad Request", h2)
+
+        # Settings should remain unchanged
+        _, b = self._simulate_get("/api/settings")
+        d = json.loads(b.decode("utf-8"))
+        self.assertEqual(d["theme"], "crimson")
+
+    def test_legacy_appearance_setting_ignored(self):
+        """Legacy settings.json containing 'appearance' cleanly ignores it and drops it on save."""
+        settings_file = self.config_dir / "settings.json"
+        settings_file.write_text(json.dumps({"appearance": "light", "theme": "kuromi"}), encoding="utf-8")
+
+        headers, body = self._simulate_get("/api/settings")
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        self.assertNotIn("appearance", data)
+        self.assertEqual(data["theme"], "kuromi")
+
+        # Saving a theme should write back clean json without appearance
+        self._simulate_post("/api/settings", {"theme": "crimson"})
+        saved_data = json.loads(settings_file.read_text(encoding="utf-8"))
+        self.assertEqual(saved_data, {"theme": "crimson"})
+
+    def test_corrupt_settings_file_fallback(self):
+        """Corrupted settings.json safely falls back to defaults."""
+        settings_file = self.config_dir / "settings.json"
+        settings_file.write_text("invalid json content", encoding="utf-8")
+        headers, body = self._simulate_get("/api/settings")
+        self.assertIn("200 OK", headers)
+        data = json.loads(body.decode("utf-8"))
+        self.assertNotIn("appearance", data)
+        self.assertEqual(data["theme"], "crimson")
+
+    def test_header_refinement_and_settings_ui(self):
+        """Verify 80px header, larger branding, 44px avatar, medium username, and theme UI (dark only)."""
+        _, html_body = self._simulate_get("/")
+        html = html_body.decode("utf-8")
+        self.assertNotIn('id="settings-appearance-group"', html)
+        self.assertNotIn('data-appearance-val', html)
+        self.assertIn('id="settings-theme-group"', html)
+        self.assertIn('data-theme-val="crimson"', html)
+        self.assertIn('data-theme-val="kuromi"', html)
+        self.assertIn('<meta name="color-scheme" content="dark">', html)
+
+        _, css_body = self._simulate_get("/style.css")
+        css = css_body.decode("utf-8")
+        # Header height ~80px
+        self.assertIn("--header-height: 80px;", css)
+        # Larger logo sizing
+        self.assertIn("font-size: 2.1rem;", css)
+        self.assertIn("font-size: 2.0rem;", css)
+        # 44px avatar
+        self.assertIn("width: 44px;", css)
+        self.assertIn("height: 44px;", css)
+        # ~1.15rem medium username
+        self.assertIn("font-size: 1.15rem;", css)
+        # Theme data-theme selectors and colors
+        self.assertIn('[data-theme="crimson"]', css)
+        self.assertIn('[data-theme="kuromi"]', css)
+        self.assertIn("#E53935", css)
+        self.assertIn("#9B7EDB", css)
+        self.assertNotIn('[data-appearance="light"]', css)
+        self.assertNotIn('[data-appearance="dark"]', css)
+
+        _, js_body = self._simulate_get("/app.js")
+        js = js_body.decode("utf-8")
+        self.assertIn("loadSettings", js)
+        self.assertIn("applySettings", js)
+        self.assertIn("applyTheme", js)
+        self.assertIn("updateTheme", js)
+        self.assertNotIn("applyAppearance", js)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 

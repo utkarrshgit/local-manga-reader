@@ -21,19 +21,159 @@ from urllib.parse import urlparse, parse_qs, unquote, quote
 DEFAULT_PORT = 8000
 
 
+def get_config_dir() -> Path:
+    """Returns directory where configuration and profile data are stored."""
+    if os.environ.get("LOCAL_MANGA_CONFIG_DIR"):
+        return Path(os.environ["LOCAL_MANGA_CONFIG_DIR"])
+    if os.environ.get("LOCAL_MANGA_CONFIG_FILE"):
+        return Path(os.environ["LOCAL_MANGA_CONFIG_FILE"]).parent
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA", os.path.expanduser(r"~\AppData\Local"))
+        return Path(local_app_data) / "LocalMangaReader"
+    if sys.platform.startswith("linux"):
+        xdg_config_home = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+        return Path(xdg_config_home) / "LocalMangaReader"
+    return Path(os.path.expanduser("~/Library/Application Support/LocalMangaReader"))
+
+
 def get_config_file_path() -> Path:
     """Returns path to the library path config file outside the git repository."""
     if os.environ.get("LOCAL_MANGA_CONFIG_FILE"):
         return Path(os.environ["LOCAL_MANGA_CONFIG_FILE"])
-    if os.environ.get("LOCAL_MANGA_CONFIG_DIR"):
-        return Path(os.environ["LOCAL_MANGA_CONFIG_DIR"]) / "library_path"
-    if sys.platform == "win32":
-        local_app_data = os.environ.get("LOCALAPPDATA", os.path.expanduser(r"~\AppData\Local"))
-        return Path(local_app_data) / "LocalMangaReader" / "library_path"
-    if sys.platform.startswith("linux"):
-        xdg_config_home = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
-        return Path(xdg_config_home) / "LocalMangaReader" / "library_path"
-    return Path(os.path.expanduser("~/Library/Application Support/LocalMangaReader")) / "library_path"
+    return get_config_dir() / "library_path"
+
+
+def get_profile_file_path() -> Path:
+    """Returns path to the profile configuration file."""
+    return get_config_dir() / "profile.json"
+
+
+def get_avatar_file_path() -> Path:
+    """Returns path to the user profile avatar image file."""
+    return get_config_dir() / "avatar.jpg"
+
+
+def load_user_profile() -> dict:
+    """Loads user profile from config directory. Defaults to name='User', has_avatar=False."""
+    profile_file = get_profile_file_path()
+    avatar_file = get_avatar_file_path()
+    name = "User"
+    if profile_file.is_file():
+        try:
+            data = json.loads(profile_file.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                raw_name = data.get("name")
+                if isinstance(raw_name, str) and raw_name.strip():
+                    name = raw_name.strip()
+        except Exception:
+            pass
+
+    has_avatar = avatar_file.is_file() and avatar_file.stat().st_size > 0
+    return {
+        "name": name,
+        "has_avatar": has_avatar,
+        "avatar_url": "/api/profile/avatar" if has_avatar else None
+    }
+
+
+def save_user_profile(name: str | None = None, avatar_bytes: bytes | None = None, remove_avatar: bool = False) -> dict:
+    """Saves user profile (name, avatar) to config directory."""
+    config_dir = get_config_dir()
+    config_dir.mkdir(parents=True, exist_ok=True)
+    profile_file = get_profile_file_path()
+    avatar_file = get_avatar_file_path()
+
+    current_profile = load_user_profile()
+    if name is not None:
+        cleaned_name = name.strip()
+        new_name = cleaned_name if cleaned_name else "User"
+    else:
+        new_name = current_profile["name"]
+
+    if remove_avatar:
+        if avatar_file.is_file():
+            try:
+                avatar_file.unlink()
+            except OSError:
+                pass
+    elif avatar_bytes:
+        temp_avatar = config_dir / "avatar.jpg.tmp"
+        try:
+            temp_avatar.write_bytes(avatar_bytes)
+            temp_avatar.replace(avatar_file)
+        except Exception:
+            if temp_avatar.is_file():
+                try:
+                    temp_avatar.unlink()
+                except OSError:
+                    pass
+
+    temp_profile = config_dir / "profile.json.tmp"
+    try:
+        temp_profile.write_text(json.dumps({"name": new_name}, indent=2), encoding="utf-8")
+        temp_profile.replace(profile_file)
+    except Exception:
+        if temp_profile.is_file():
+            try:
+                temp_profile.unlink()
+            except OSError:
+                pass
+
+    return load_user_profile()
+
+
+def get_settings_file_path() -> Path:
+    """Returns path to the application settings configuration file."""
+    return get_config_dir() / "settings.json"
+
+
+def load_app_settings() -> dict:
+    """Loads application settings (theme). Defaults to crimson."""
+    settings_file = get_settings_file_path()
+    theme = "crimson"
+    if settings_file.is_file():
+        try:
+            data = json.loads(settings_file.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                raw_theme = data.get("theme")
+                if raw_theme in ("crimson", "kuromi"):
+                    theme = raw_theme
+        except Exception:
+            pass
+
+    return {
+        "theme": theme
+    }
+
+
+def save_app_settings(theme: str | None = None) -> dict:
+    """Saves application settings (theme) to config directory."""
+    config_dir = get_config_dir()
+    config_dir.mkdir(parents=True, exist_ok=True)
+    settings_file = get_settings_file_path()
+
+    current = load_app_settings()
+    new_theme = current["theme"]
+
+    if theme is not None and theme in ("crimson", "kuromi"):
+        new_theme = theme
+
+    payload = {
+        "theme": new_theme
+    }
+
+    temp_settings = config_dir / "settings.json.tmp"
+    try:
+        temp_settings.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        temp_settings.replace(settings_file)
+    except Exception:
+        if temp_settings.is_file():
+            try:
+                temp_settings.unlink()
+            except OSError:
+                pass
+
+    return load_app_settings()
 
 
 def save_library_path_config(path_str: str) -> None:
@@ -1008,7 +1148,50 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
             vals = query.get(name)
             return vals[0] if vals else None
 
-        # 0. API: Get active library info (/api/library)
+        # 0. API: Application Settings (/api/settings)
+        if path == "/api/settings":
+            self._send_json(load_app_settings())
+            return
+
+        # 0b. API: User Profile endpoints (/api/profile and /api/profile/avatar)
+        if path == "/api/profile":
+            self._send_json(load_user_profile())
+            return
+
+        if path == "/api/profile/avatar":
+            avatar_path = get_avatar_file_path()
+            if not avatar_path.is_file() or avatar_path.stat().st_size == 0:
+                self._send_error("Avatar not found", HTTPStatus.NOT_FOUND)
+                return
+
+            try:
+                with open(avatar_path, "rb") as f:
+                    header = f.read(32)
+                fmt = detect_image_format(header)
+                if fmt and fmt in SUPPORTED_IMAGE_TYPES:
+                    mime_type = SUPPORTED_IMAGE_TYPES[fmt]
+                else:
+                    mime_type, _ = mimetypes.guess_type(str(avatar_path))
+                    if not mime_type:
+                        mime_type = "image/jpeg"
+
+                file_size = avatar_path.stat().st_size
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", mime_type)
+                self.send_header("Content-Length", str(file_size))
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
+                self.end_headers()
+
+                with open(avatar_path, "rb") as f:
+                    while chunk := f.read(65536):
+                        self.wfile.write(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
+
+        # 0b. API: Get active library info (/api/library)
         if path == "/api/library":
             self._send_json({
                 "library_path": str(self.library.root_path),
@@ -1341,6 +1524,112 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path
+
+        # 0. API: Update user profile (/api/profile)
+        if path == "/api/profile":
+            content_type = self.headers.get("Content-Type", "")
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+            except (ValueError, TypeError):
+                content_length = 0
+
+            if content_length > 50 * 1024 * 1024:
+                self._send_error("Payload too large (max 50MB)", HTTPStatus.BAD_REQUEST)
+                return
+
+            if "application/json" in content_type:
+                body = self._read_json_body()
+                if body is None:
+                    self._send_error("Invalid or missing JSON body", HTTPStatus.BAD_REQUEST)
+                    return
+                name = body.get("name")
+                if name is not None and not isinstance(name, str):
+                    self._send_error("Field 'name' must be a string", HTTPStatus.BAD_REQUEST)
+                    return
+                remove_avatar = bool(body.get("remove_avatar", False))
+                avatar_bytes = None
+                raw_b64 = body.get("avatar")
+                if raw_b64 and isinstance(raw_b64, str):
+                    try:
+                        import base64
+                        if "," in raw_b64:
+                            raw_b64 = raw_b64.split(",", 1)[1]
+                        avatar_bytes = base64.b64decode(raw_b64)
+                    except Exception:
+                        self._send_error("Invalid base64 avatar data", HTTPStatus.BAD_REQUEST)
+                        return
+                    if not detect_image_format(avatar_bytes):
+                        self._send_error("Invalid or unsupported image file. Supported formats: JPEG, PNG, WebP, GIF, AVIF, BMP", HTTPStatus.BAD_REQUEST)
+                        return
+
+                profile = save_user_profile(name=name, avatar_bytes=avatar_bytes, remove_avatar=remove_avatar)
+                self._send_json({"success": True, **profile})
+                return
+            else:
+                self._send_error("Expected application/json Content-Type", HTTPStatus.BAD_REQUEST)
+                return
+
+        # 0b. API: Upload or remove user profile avatar directly (/api/profile/avatar)
+        if path == "/api/profile/avatar":
+            query = parse_qs(parsed.query)
+            action = query.get("action", [None])[0]
+            if action in ("remove", "delete"):
+                profile = save_user_profile(remove_avatar=True)
+                self._send_json({"success": True, **profile})
+                return
+
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+            except (ValueError, TypeError):
+                content_length = 0
+
+            if content_length <= 0:
+                self._send_error("Missing request body", HTTPStatus.BAD_REQUEST)
+                return
+            if content_length > 50 * 1024 * 1024:
+                self._send_error("Payload too large (max 50MB)", HTTPStatus.BAD_REQUEST)
+                return
+
+            raw_body = self.rfile.read(content_length)
+            content_type = self.headers.get("Content-Type", "")
+            avatar_bytes = None
+            if "application/json" in content_type:
+                try:
+                    import base64
+                    json_data = json.loads(raw_body.decode("utf-8"))
+                    raw_b64 = json_data.get("avatar", "")
+                    if "," in raw_b64:
+                        raw_b64 = raw_b64.split(",", 1)[1]
+                    avatar_bytes = base64.b64decode(raw_b64)
+                except Exception:
+                    self._send_error("Invalid base64 avatar data", HTTPStatus.BAD_REQUEST)
+                    return
+            else:
+                avatar_bytes = raw_body
+
+            if not avatar_bytes or not detect_image_format(avatar_bytes):
+                self._send_error("Invalid or unsupported image file. Supported formats: JPEG, PNG, WebP, GIF, AVIF, BMP", HTTPStatus.BAD_REQUEST)
+                return
+
+            profile = save_user_profile(avatar_bytes=avatar_bytes)
+            self._send_json({"success": True, **profile})
+            return
+
+        # 0c. API: Update application settings (/api/settings)
+        if path == "/api/settings":
+            body = self._read_json_body()
+            if body is None:
+                self._send_error("Invalid or missing JSON body", HTTPStatus.BAD_REQUEST)
+                return
+
+            theme = body.get("theme")
+            if theme is None or theme not in ("crimson", "kuromi"):
+                self._send_error("Invalid or missing theme value. Allowed: 'crimson', 'kuromi'", HTTPStatus.BAD_REQUEST)
+                return
+
+            updated = save_app_settings(theme=theme)
+            self._send_json({"success": True, **updated})
+            return
 
         # 1. API: Update reading progress (/api/progress)
         if path == "/api/progress":
@@ -1754,6 +2043,15 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 "success": True,
                 "series": series_name,
                 "action": "removed"
+            })
+            return
+
+        if path == "/api/profile/avatar":
+            profile = save_user_profile(remove_avatar=True)
+            self._send_json({
+                "success": True,
+                "action": "removed",
+                **profile
             })
             return
 
