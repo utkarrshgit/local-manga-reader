@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import sys
 from http import HTTPStatus
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote, quote
 
@@ -1448,7 +1448,8 @@ def run_server(library_dir: str, port: int = DEFAULT_PORT):
     MangaRequestHandler.library = library
     MangaRequestHandler.static_dir = Path(__file__).parent / "static"
 
-    server = HTTPServer(("127.0.0.1", port), MangaRequestHandler)
+    server = ThreadingHTTPServer(("127.0.0.1", port), MangaRequestHandler)
+    server.daemon_threads = True
     try:
         server.serve_forever()
     except KeyboardInterrupt:

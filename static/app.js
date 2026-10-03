@@ -792,19 +792,104 @@ document.addEventListener("DOMContentLoaded", () => {
 
       allSeriesList = data.series || [];
 
-      // Concurrently resolve existing progress data for all series
-      if (allSeriesList.length > 0) {
-        await Promise.all(
-          allSeriesList.map(async (s) => {
-            s.progressInfo = await fetchSeriesProgressInfo(s.name);
-          })
-        );
-      }
-
+      // Render library immediately using returned series data
       renderLibrarySeries();
+
+      // Concurrently resolve existing progress data for all series in background
+      if (allSeriesList.length > 0) {
+        allSeriesList.forEach((s) => {
+          fetchSeriesProgressInfo(s.name)
+            .then((prog) => {
+              s.progressInfo = prog;
+              updateSeriesCardProgress(s.name, prog);
+            })
+            .catch(() => {});
+        });
+      }
     } catch (err) {
       showError(`Failed to load library: ${err.message}`);
       librarySubtitle.textContent = "Could not connect to the backend server.";
+    }
+  }
+
+  // Update a single series card in the library grid when its progress information resolves
+  function updateSeriesCardProgress(seriesName, prog) {
+    if (!seriesGrid) return;
+    const cards = seriesGrid.querySelectorAll(".series-card");
+    let targetCard = null;
+    for (const c of cards) {
+      if (c.dataset.seriesName === seriesName) {
+        targetCard = c;
+        break;
+      }
+    }
+    if (!targetCard) return;
+
+    const coverWrapper = targetCard.querySelector(".series-cover-wrapper");
+    const content = targetCard.querySelector(".series-card-content");
+    if (!content) return;
+
+    if (prog && prog.hasProgress && prog.chapterName) {
+      const percent = typeof prog.percentage === "number" ? prog.percentage : 0;
+      const targetChapter = prog.chapterName;
+      const readUrl = `#/read/${encodeURIComponent(seriesName)}/${encodeURIComponent(targetChapter)}`;
+
+      // Update or add progress edge bar on cover
+      if (coverWrapper) {
+        let edge = coverWrapper.querySelector(".series-cover-progress");
+        if (!edge) {
+          edge = document.createElement("div");
+          edge.className = "series-cover-progress";
+          edge.setAttribute("aria-hidden", "true");
+          edge.innerHTML = `<div class="series-cover-progress-fill" style="width: ${percent}%;"></div>`;
+          coverWrapper.appendChild(edge);
+        } else {
+          const fill = edge.querySelector(".series-cover-progress-fill");
+          if (fill) fill.style.width = `${percent}%`;
+        }
+      }
+
+      // Update status text
+      let statusEl = content.querySelector(".series-card-status");
+      if (statusEl) {
+        statusEl.className = "series-card-status";
+        statusEl.textContent = targetChapter;
+      }
+
+      // Add or update continue link
+      let continueLink = content.querySelector(".series-card-continue");
+      if (!continueLink) {
+        continueLink = document.createElement("a");
+        continueLink.className = "series-card-continue";
+        continueLink.setAttribute("href", readUrl);
+        continueLink.setAttribute("title", `Continue reading ${targetChapter}`);
+        continueLink.innerHTML = `
+          <span class="continue-text">Continue reading</span>
+          <span class="continue-arrow" aria-hidden="true">→</span>
+        `;
+        continueLink.addEventListener("click", (e) => {
+          e.stopPropagation();
+          window.location.hash = continueLink.getAttribute("href");
+        });
+        content.appendChild(continueLink);
+      } else {
+        continueLink.setAttribute("href", readUrl);
+        continueLink.setAttribute("title", `Continue reading ${targetChapter}`);
+      }
+    } else {
+      let statusEl = content.querySelector(".series-card-status");
+      if (statusEl) {
+        statusEl.className = "series-card-status status-unstarted";
+        statusEl.textContent = "Not started";
+      }
+      const continueLink = content.querySelector(".series-card-continue");
+      if (continueLink) {
+        continueLink.remove();
+      }
+      if (coverWrapper) {
+        const edge = coverWrapper.querySelector(".series-cover-progress");
+        if (edge) edge.remove();
+      }
     }
   }
 
@@ -863,6 +948,7 @@ document.addEventListener("DOMContentLoaded", () => {
     filtered.forEach((s) => {
       const card = document.createElement("div");
       card.className = "series-card";
+      card.dataset.seriesName = s.name;
       card.setAttribute("role", "button");
       card.setAttribute("tabindex", "0");
 

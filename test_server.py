@@ -1590,7 +1590,7 @@ fi
                 saved = f.read().strip()
             self.assertEqual(saved, lib1)
             with open(open_log) as f:
-                self.assertIn("-a Safari http://localhost:8000", f.read())
+                self.assertIn("-a Safari http://127.0.0.1:8000", f.read())
             with open(server_log) as f:
                 slog = f.read()
                 self.assertIn(f"--dir {lib1}", slog)
