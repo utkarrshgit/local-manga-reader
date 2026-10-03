@@ -1,4 +1,4 @@
-![anime gif](https://github.com/utkarrshgit/temp_media/blob/775e243b4dc67da77e56ce9e8e6a4b22bc5bfff8/local_manga_reader/intro.gif)
+![background gif](assets/background.gif)
 
 # { index }
 
@@ -6,76 +6,120 @@ A local manga and manhwa reader that runs in your web browser.
 
 ## Features
 
-- Vertical scrolling reader
-- Manga and manhwa reading modes
-- Reading progress and resume
+- Vertical scrolling for manga and manhwa
+- Spaced and seamless reading modes
+- Automatic reading progress and resume
 - Chapter bookmarks
 - Series covers and backgrounds
 - Series metadata and external links
-- Persistent manga library selection
+- Persistent manga library folder
 - Keyboard shortcuts
-- Safari/mobile-friendly interface
+- Safari and mobile-friendly interface
 
 ## Preview
 
-![Library](https://github.com/utkarrshgit/temp_media/blob/775e243b4dc67da77e56ce9e8e6a4b22bc5bfff8/local_manga_reader/Screenshot%201.png)
+![Library](assets/library.png)
 
-![Series page](https://github.com/utkarrshgit/temp_media/blob/775e243b4dc67da77e56ce9e8e6a4b22bc5bfff8/local_manga_reader/Screenshot%202.png)
+![Series page](assets/series.png)
 
-![Reader](https://github.com/utkarrshgit/temp_media/blob/775e243b4dc67da77e56ce9e8e6a4b22bc5bfff8/local_manga_reader/Screenshot%203.png)
+![Reader](assets/reader.png)
 
-![Reading demo](https://github.com/utkarrshgit/temp_media/blob/775e243b4dc67da77e56ce9e8e6a4b22bc5bfff8/local_manga_reader/demo.webm)
+![Reading demo](assets/reading-demo.gif)
 
 ## Quick Start
 
-Start the launcher for your system:
+### macOS
 
-- **macOS**: `start-mac.command`
-- **Windows**: `start-windows.bat`
-- **Linux**: `start-linux.sh`
+Double-click `start-mac.command`.
 
-On first launch, you will be prompted to select your manga library folder. Your folder selection is remembered for future launches.
+On the first launch, select your manga library folder.
+
+### Windows
+
+Double-click `start-windows.bat`.
+
+On the first launch, select your manga library folder.
+
+### Linux
+
+Run:
+
+```bash
+./start-linux.sh
+```
+
+On the first launch, select your manga library folder.
+
+The app will open in your default web browser.
 
 ## Manga Library Structure
 
-Organize your library by series and chapter folders:
+Your manga library should be organized like this:
 
 ```text
 Manga/
-├── One Piece/
+├── Solo Leveling/
+│   ├── cover.jpg
+│   ├── background.jpg
 │   ├── Chapter 1/
-│   │   ├── 001.jpg
-│   │   └── 002.jpg
+│   │   ├── 1.jpg
+│   │   ├── 2.jpg
+│   │   └── ...
 │   └── Chapter 2/
-│       └── 001.jpg
-└── Berserk/
-    └── Chapter 1/
-        ├── 001.jpg
-        └── 002.jpg
+│       ├── 1.jpg
+│       ├── 2.jpg
+│       └── ...
+│
+└── Kagurabachi/
+    ├── cover.jpg
+    ├── background.jpg
+    ├── Chapter 1/
+    │   ├── 1.jpg
+    │   ├── 2.jpg
+    │   └── ...
+    └── Chapter 2/
+        ├── 1.jpg
+        ├── 2.jpg
+        └── ...
 ```
 
-Your manga library can be stored anywhere on your computer and does not need to be inside the project folder.
+`cover.jpg` and `background.jpg` are optional.
+
+Reader data is stored separately inside each series in a `.reader` folder.
 
 ## Changing the Library Folder
 
-You can switch to another library at any time by clicking "Change Manga Folder" on the library page.
+You can change the manga library folder from the Library page using **Change Manga Folder**.
+
+The selected folder is saved locally so you don't have to choose it every time you launch the app.
+
+Your manga files are never copied into the project.
 
 ## Reading
 
-- **Spaced mode**: Pages have gaps between them, suited for traditional manga.
-- **Seamless mode**: Pages form one continuous vertical strip, suited for webtoons and manhwa.
-- Reading progress is saved automatically as you scroll.
-- Bookmarks can be added while reading to quickly return to specific pages.
+### Spaced
+
+Adds space between pages, suitable for traditional manga.
+
+### Seamless
+
+Removes gaps between pages for continuous scrolling, suitable for manhwa/webtoons.
+
+Reading progress is saved automatically and the reader resumes from the last page you reached.
 
 ## Data & Privacy
 
-- The app runs entirely on your local machine.
-- Your manga files are never copied, moved, or modified.
-- Reading progress, bookmarks, and series metadata are stored locally inside each series' `.reader` folder.
+This app runs locally.
+
+Your manga files, reading progress, bookmarks, and series metadata stay on your computer.
+
+No account or cloud service is required.
 
 ## Troubleshooting
 
-- **Python 3 is not installed**: Install Python 3 and ensure it is available in your command line / PATH.
-- **Launcher permission (macOS / Linux)**: If running the script gives a permission error, make it executable:
-  - macOS: `chmod +x start-mac.command`
-  - Linux: `chmod +x start-linux.sh`
+If the app does not open:
+
+- Make sure Python 3 is installed.
+- Make sure your selected manga library folder still exists.
+- Try launching the platform-specific script again.
+- Check the terminal window for error messages.
