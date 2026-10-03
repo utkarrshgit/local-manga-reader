@@ -24,7 +24,7 @@ A local manga and manhwa reader that runs in your web browser.
 
 ![Reader](assets/reader.png)
 
-![Reading demo](assets/reading-demo.gif)
+![Reading demo](assets/demo.webm)
 
 ## Quick Start
 
