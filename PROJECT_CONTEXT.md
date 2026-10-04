@@ -90,10 +90,10 @@ Desktop and web-based comic/manga readers often require heavy database engines, 
 |      User Config / State Dir       |   |             Manga Library              |
 | (~/Library/Application Support/    |   |           (Any local folder)           |
 |   LocalMangaReader/)               |   |                                        |
-| ├── library_path (Plaintext path)  |   | Manga/                                 |
-| ├── settings.json (Theme choice)   |   | └── Series Name/                       |
-| ├── profile.json (User name)       |   |     ├── cover.jpg (optional)           |
-| └── avatar.jpg (User image)        |   |     ├── background.jpg (optional)      |
+| ├── settings.json (Theme & Lib)    |   | Manga/                                 |
+| ├── profile.json (User name)       |   | └── Series Name/                       |
+| └── avatar.jpg (User image)        |   |     ├── cover.jpg (optional)           |
+|                                    |   |     ├── background.jpg (optional)      |
 +------------------------------------+   |     ├── Chapter 01/                    |
                                          |     │   ├── 001.jpg                    |
                                          |     │   └── 002.png                    |
@@ -188,10 +188,10 @@ When launched via CLI:
 python3 server.py --dir /path/to/manga --port 8000
 ```
 - If `--dir` is supplied, `run_server()` instantiates `MangaLibrary(library_dir=args.dir)`.
-- **CRITICAL BEHAVIOR**: Passing `--dir` on the command line sets the library path for that runtime instance only. It does **not** overwrite the saved configuration file (`library_path`).
+- **CRITICAL BEHAVIOR**: Passing `--dir` on the command line sets the library path for that runtime instance only. It does **not** overwrite the saved configuration file (`settings.json`).
 - If `--dir` is omitted, `DEFAULT_LIBRARY_DIR` resolves via `get_default_library_dir()`:
   1. `$MANGA_DIR` environment variable (if set).
-  2. Content of the persistent config file `library_path` (if present).
+  2. `library_path` key in persistent `settings.json` (with automatic migration from legacy standalone `library_path` file).
   3. Returns `None` if unconfigured (there is no default/fallback directory such as `~/Manga`).
 
 ### Networking & Threading
@@ -303,7 +303,7 @@ Routes without `/api/` prefix serve files from the `static/` directory:
   ```json
   { "path": "/new/path/to/manga" }
   ```
-- **Behavior**: If `"action": "select"`, invokes `choose_folder_native()`. Updates the server's in-memory `MangaLibrary` instance and persists the path to `library_path`.
+- **Behavior**: If `"action": "select"`, invokes `choose_folder_native()`. Updates the server's in-memory `MangaLibrary` instance and persists the path to `settings.json` under `library_path` (preserving other settings).
 - **Response**: `200 OK`
   ```json
   {
@@ -453,8 +453,8 @@ flowchart TD
     ArgCheck -- No --> EnvCheck{Is MANGA_DIR env var set?}
     EnvCheck -- Yes --> UseEnv[Use MANGA_DIR path]
     
-    EnvCheck -- No --> SavedCheck{Does library_path file exist?}
-    SavedCheck -- Yes --> ReadSaved[Read path from library_path file]
+    EnvCheck -- No --> SavedCheck{Does settings.json have library_path or legacy file exist?}
+    SavedCheck -- Yes --> ReadSaved[Read path from settings.json / migrate legacy file]
     ReadSaved --> UseSaved[Use saved path]
     
     SavedCheck -- No --> Unconfigured[Unconfigured state: root_path = None]
@@ -476,19 +476,26 @@ flowchart TD
      - The app loads and enters its standard "Folder Unavailable" / no-library state.
      - The user clicks **Choose another folder** in the web UI (`POST /api/library`), which prompts native folder selection and persists the chosen folder.
 2. **Path Storage Location**:
-   - macOS: `~/Library/Application Support/LocalMangaReader/library_path`
-   - Linux: `~/.config/LocalMangaReader/library_path` (or `$XDG_CONFIG_HOME/LocalMangaReader/library_path`)
-   - Windows: `%LOCALAPPDATA%\LocalMangaReader\library_path`
-   - Test Override: Can be overridden by setting `$LOCAL_MANGA_CONFIG_DIR` or `$LOCAL_MANGA_CONFIG_FILE`.
+   - macOS: `~/Library/Application Support/LocalMangaReader/settings.json`
+   - Linux: `~/.config/LocalMangaReader/settings.json` (or `$XDG_CONFIG_HOME/LocalMangaReader/settings.json`)
+   - Windows: `%LOCALAPPDATA%\LocalMangaReader\settings.json`
+   - Test Override: Can be overridden by setting `$LOCAL_MANGA_CONFIG_DIR`, `$LOCAL_MANGA_SETTINGS_FILE`, or `$LOCAL_MANGA_CONFIG_FILE`.
 3. **Storage Format**:
-   Plaintext file containing the absolute directory path on the first line (UTF-8 encoded).
+   JSON file (`settings.json`) containing `library_path` alongside other settings (e.g. `theme`):
+   ```json
+   {
+     "theme": "crimson",
+     "library_path": "/Users/user/Manga"
+   }
+   ```
+   - **Legacy Migration**: If `settings.json` exists without `library_path`, but an old standalone `library_path` file is present, the server automatically reads the legacy path, writes it into `settings.json` preserving all existing settings, and removes the legacy file *only* after a successful write. If the write fails, the old file is retained and the path is kept in memory.
 4. **Who Reads It Later**:
    - `server.py`: Inside `load_saved_library_path()` during startup or when retrieving library status.
    - Shell launchers for Windows/Linux if configured to read the file.
 5. **If Saved Path No Longer Exists**:
    - `MangaLibrary.exists()` returns `False`. All listing endpoints return empty arrays (`[]`), and `/api/library` returns `"library_exists": false`. The client UI displays the "Manga Folder Unavailable" state with the "Choose another folder" button.
 6. **Manual `python3 server.py --dir /other/path` Execution**:
-   - Does **NOT** modify the saved `library_path` file.
+   - Does **NOT** modify `settings.json`.
    - The CLI argument is consumed by `argparse` and passed to `run_server()`. `save_library_path_config()` is never invoked by `main()`.
    - Why: This allows developers and power users to inspect a temporary manga folder or secondary drive without clobbering their primary saved library location.
    - The only action that updates `library_path` from within the server is an explicit `POST /api/library` request from the UI.
@@ -744,7 +751,7 @@ When a chapter is opened (`loadReader(series, chapter)`):
 | `GET` | `/api/profile/avatar` | Stream avatar | None | None | Binary image payload (`image/jpeg`, etc.) | None |
 | `DELETE` | `/api/profile/avatar` | Delete avatar | None | None | `{ "success": true, "action": "removed", ... }` | Deletes `avatar.jpg` |
 | `GET` | `/api/library` | Get active library | None | None | `{ "library_path": "...", "library_exists": true, ... }` | None |
-| `POST` | `/api/library` | Change library | None | `{ "action": "select" }` or `{ "path": "..." }` | `{ "success": true, "library_path": "...", ... }` | `library_path` |
+| `POST` | `/api/library` | Change library | None | `{ "action": "select" }` or `{ "path": "..." }` | `{ "success": true, "library_path": "...", ... }` | `settings.json` |
 | `GET` | `/api/series` | List series | None | None | `{ "series": [...], "series_count": N }` | None |
 | `GET` | `/api/chapters` | List chapters | `series=<name>` | None | `{ "series": "...", "chapters": [...], ... }` | None |
 | `GET` | `/api/images` | List images | `series=<name>&chapter=<ch>` | None | `{ "series": "...", "images": [...], ... }` | None |
@@ -897,7 +904,7 @@ When modifying or extending this codebase, future AI assistants **must preserve*
 4. **Isolated Configuration Directory**:
    All user settings, library paths, profiles, and avatars must be stored in the OS-appropriate Application Support/config directory, never inside the project git repository.
 5. **CLI `--dir` Ephemeral Behavior**:
-   Passing `--dir` on the command line must continue to override the library path for that session only, without altering the persisted `library_path` config file.
+   Passing `--dir` on the command line must continue to override the library path for that session only, without altering the persisted `library_path` in `settings.json`.
 6. **Dark-Only Minimal Editorial Aesthetic**:
    Do not introduce a light mode or bright colorful backgrounds. Both Crimson and Kuromi must share the neutral dark `#0E0E0E` palette.
 7. **Transparent Favicon Architecture**:

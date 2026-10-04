@@ -44,7 +44,8 @@ fi
 
 # 4. Local configuration path (stored outside git repository)
 CONFIG_DIR="${LOCAL_MANGA_CONFIG_DIR:-"${XDG_CONFIG_HOME:-"$HOME/.config"}/LocalMangaReader"}"
-CONFIG_FILE="${LOCAL_MANGA_CONFIG_FILE:-"$CONFIG_DIR/library_path"}"
+CONFIG_FILE="${LOCAL_MANGA_CONFIG_FILE:-"$CONFIG_DIR/settings.json"}"
+LEGACY_CONFIG_FILE="${LOCAL_MANGA_LEGACY_CONFIG_FILE:-"$CONFIG_DIR/library_path"}"
 
 # Helper function to prompt for folder on Linux
 choose_folder_linux() {
@@ -167,7 +168,10 @@ else
 
     SAVED_PATH=""
     if [ -f "$CONFIG_FILE" ]; then
-        SAVED_PATH="$(head -n 1 "$CONFIG_FILE" 2>/dev/null | tr -d '\r\n')"
+        SAVED_PATH="$("$PYTHON_BIN" -c "import json, sys; (lambda: print(json.load(open(sys.argv[1], encoding='utf-8')).get('library_path') or ''))()" "$CONFIG_FILE" 2>/dev/null | tr -d '\r\n')"
+    fi
+    if [ -z "$SAVED_PATH" ] && [ -f "$LEGACY_CONFIG_FILE" ]; then
+        SAVED_PATH="$(head -n 1 "$LEGACY_CONFIG_FILE" 2>/dev/null | tr -d '\r\n')"
     fi
 
     if [ $FORCE_CHOOSE -eq 0 ] && [ -n "$SAVED_PATH" ] && [ -d "$SAVED_PATH" ]; then
@@ -223,7 +227,7 @@ else
 
         # Save selected path outside the git repository
         mkdir -p "$CONFIG_DIR"
-        echo "$CLEAN_SELECTION" > "$CONFIG_FILE"
+        "$PYTHON_BIN" -c "import json, os, sys; c, leg, p = sys.argv[1:4]; d = {}; (lambda: exec('try:\n d.update(json.load(open(c, encoding=\'utf-8\')))\nexcept: pass'))() if os.path.isfile(c) else None; d['library_path'] = p; open(c + '.tmp', 'w', encoding='utf-8').write(json.dumps(d, indent=2)); os.replace(c + '.tmp', c); (os.remove(leg) if os.path.isfile(leg) else None)" "$CONFIG_FILE" "$LEGACY_CONFIG_FILE" "$CLEAN_SELECTION" 2>/dev/null || true
         TARGET_MANGA_DIR="$CLEAN_SELECTION"
         echo "Manga library saved: $TARGET_MANGA_DIR"
     fi

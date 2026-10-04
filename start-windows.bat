@@ -46,7 +46,8 @@ if not defined LOCALAPPDATA (
     set "LOCALAPPDATA=%USERPROFILE%\AppData\Local"
 )
 set "CONFIG_DIR=%LOCALAPPDATA%\LocalMangaReader"
-set "CONFIG_FILE=%CONFIG_DIR%\library_path"
+set "CONFIG_FILE=%CONFIG_DIR%\settings.json"
+set "LEGACY_CONFIG_FILE=%CONFIG_DIR%\library_path"
 
 :: 5. Resolve manga directory
 set "TARGET_MANGA_DIR="
@@ -83,7 +84,14 @@ if not defined TARGET_MANGA_DIR (
 if not defined TARGET_MANGA_DIR (
     set "SAVED_PATH="
     if exist "%CONFIG_FILE%" (
-        set /p SAVED_PATH=<"%CONFIG_FILE%"
+        for /f "usebackq delims=" %%I in (`%PYTHON_CMD% -c "import json, sys; (lambda: print(json.load(open(sys.argv[1], encoding='utf-8')).get('library_path') or ''))()" "%CONFIG_FILE%" 2^>nul`) do (
+            set "SAVED_PATH=%%I"
+        )
+    )
+    if not defined SAVED_PATH (
+        if exist "%LEGACY_CONFIG_FILE%" (
+            set /p SAVED_PATH=<"%LEGACY_CONFIG_FILE%"
+        )
     )
 
     if defined SAVED_PATH (
@@ -134,9 +142,9 @@ if not defined TARGET_MANGA_DIR (
             exit /b 1
         )
 
-        :: Save the selected path outside the git repository
+        :: Save the selected path outside the git repository in settings.json
         if not exist "%CONFIG_DIR%" mkdir "%CONFIG_DIR%"
-        (echo !CHOSEN_PATH!) > "%CONFIG_FILE%"
+        %PYTHON_CMD% -c "import json, os, sys; c, leg, p = sys.argv[1:4]; d = {}; (lambda: exec('try:\n d.update(json.load(open(c, encoding=\'utf-8\')))\nexcept: pass'))() if os.path.isfile(c) else None; d['library_path'] = p; open(c + '.tmp', 'w', encoding='utf-8').write(json.dumps(d, indent=2)); os.replace(c + '.tmp', c); (os.remove(leg) if os.path.isfile(leg) else None)" "%CONFIG_FILE%" "%LEGACY_CONFIG_FILE%" "!CHOSEN_PATH!" 2>nul
         set "TARGET_MANGA_DIR=!CHOSEN_PATH!"
         echo Manga library saved: !TARGET_MANGA_DIR!
     )

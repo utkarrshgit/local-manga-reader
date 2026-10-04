@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 import io
 from pathlib import Path
 import tempfile
@@ -1377,67 +1378,88 @@ class TestPhase6Features(unittest.TestCase):
         self.assertIsInstance(data["series_count"], int)
 
     def test_change_library_by_path_and_persist(self):
-        """36. POST /api/library with valid path updates active library and saves config file."""
+        """36. POST /api/library with valid path updates active library and saves settings.json."""
         with tempfile.TemporaryDirectory() as new_lib_dir, tempfile.TemporaryDirectory() as new_conf_dir:
-            conf_file = os.path.join(new_conf_dir, "library_path")
-            os.environ["LOCAL_MANGA_CONFIG_FILE"] = conf_file
+            conf_file = os.path.join(new_conf_dir, "settings.json")
+            legacy_file = os.path.join(new_conf_dir, "library_path")
+            orig_env = os.environ.get("LOCAL_MANGA_SETTINGS_FILE")
+            orig_conf = os.environ.get("LOCAL_MANGA_CONFIG_FILE")
+            os.environ["LOCAL_MANGA_SETTINGS_FILE"] = conf_file
+            try:
+                # Create a sample series in new library
+                series_path = Path(new_lib_dir) / "OnePiece"
+                series_path.mkdir(parents=True)
+                ch1 = series_path / "Chapter 1"
+                ch1.mkdir()
+                (ch1 / "1.jpg").write_bytes(b"DATA")
 
-            # Create a sample series in new library
-            series_path = Path(new_lib_dir) / "OnePiece"
-            series_path.mkdir(parents=True)
-            ch1 = series_path / "Chapter 1"
-            ch1.mkdir()
-            (ch1 / "1.jpg").write_bytes(b"DATA")
+                headers, body = self._simulate_post("/api/library", {"path": new_lib_dir})
+                self.assertIn("200 OK", headers)
+                res = json.loads(body.decode("utf-8"))
+                self.assertTrue(res["success"])
+                self.assertEqual(res["library_path"], str(Path(new_lib_dir).resolve()))
+                self.assertTrue(res["library_exists"])
+                self.assertEqual(res["series_count"], 1)
 
-            headers, body = self._simulate_post("/api/library", {"path": new_lib_dir})
-            self.assertIn("200 OK", headers)
-            res = json.loads(body.decode("utf-8"))
-            self.assertTrue(res["success"])
-            self.assertEqual(res["library_path"], str(Path(new_lib_dir).resolve()))
-            self.assertTrue(res["library_exists"])
-            self.assertEqual(res["series_count"], 1)
+                # Check settings.json file was written
+                self.assertTrue(os.path.isfile(conf_file))
+                with open(conf_file, encoding="utf-8") as f:
+                    saved = json.load(f)
+                self.assertEqual(saved.get("library_path"), str(Path(new_lib_dir).resolve()))
+                self.assertFalse(os.path.isfile(legacy_file))
 
-            # Check config file was written
-            self.assertTrue(os.path.isfile(conf_file))
-            with open(conf_file) as f:
-                saved = f.read().strip()
-            self.assertEqual(saved, str(Path(new_lib_dir).resolve()))
-
-            # Check GET /api/series returns the new series
-            _, s_body = self._simulate_get("/api/series")
-            s_data = json.loads(s_body.decode("utf-8"))
-            self.assertEqual(s_data["series_count"], 1)
-            self.assertEqual(s_data["series"][0]["name"], "OnePiece")
-
-            # Restore original library for remaining tests
-            self.MangaRequestHandler.library = self.library
-            os.environ.pop("LOCAL_MANGA_CONFIG_FILE", None)
+                # Check GET /api/series returns the new series
+                _, s_body = self._simulate_get("/api/series")
+                s_data = json.loads(s_body.decode("utf-8"))
+                self.assertEqual(s_data["series_count"], 1)
+                self.assertEqual(s_data["series"][0]["name"], "OnePiece")
+            finally:
+                # Restore original library for remaining tests
+                self.MangaRequestHandler.library = self.library
+                if orig_env is not None:
+                    os.environ["LOCAL_MANGA_SETTINGS_FILE"] = orig_env
+                else:
+                    os.environ.pop("LOCAL_MANGA_SETTINGS_FILE", None)
+                if orig_conf is not None:
+                    os.environ["LOCAL_MANGA_CONFIG_FILE"] = orig_conf
+                else:
+                    os.environ.pop("LOCAL_MANGA_CONFIG_FILE", None)
 
     def test_change_library_by_native_select_and_cancellation(self):
         """37. POST /api/library with action='select' handles selection and cancellation."""
         with tempfile.TemporaryDirectory() as new_lib_dir, tempfile.TemporaryDirectory() as new_conf_dir:
-            conf_file = os.path.join(new_conf_dir, "library_path")
-            os.environ["LOCAL_MANGA_CONFIG_FILE"] = conf_file
+            conf_file = os.path.join(new_conf_dir, "settings.json")
+            legacy_file = os.path.join(new_conf_dir, "library_path")
+            orig_env = os.environ.get("LOCAL_MANGA_SETTINGS_FILE")
+            os.environ["LOCAL_MANGA_SETTINGS_FILE"] = conf_file
+            try:
+                # Test selection via mock
+                os.environ["MOCK_FOLDER_PICKER_RESULT"] = new_lib_dir
+                headers, body = self._simulate_post("/api/library", {"action": "select"})
+                self.assertIn("200 OK", headers)
+                res = json.loads(body.decode("utf-8"))
+                self.assertTrue(res["success"])
+                self.assertEqual(res["library_path"], str(Path(new_lib_dir).resolve()))
+                self.assertTrue(os.path.isfile(conf_file))
+                with open(conf_file, encoding="utf-8") as f:
+                    saved = json.load(f)
+                self.assertEqual(saved.get("library_path"), str(Path(new_lib_dir).resolve()))
+                self.assertFalse(os.path.isfile(legacy_file))
 
-            # Test selection via mock
-            os.environ["MOCK_FOLDER_PICKER_RESULT"] = new_lib_dir
-            headers, body = self._simulate_post("/api/library", {"action": "select"})
-            self.assertIn("200 OK", headers)
-            res = json.loads(body.decode("utf-8"))
-            self.assertTrue(res["success"])
-            self.assertEqual(res["library_path"], str(Path(new_lib_dir).resolve()))
-
-            # Test cancellation
-            os.environ["MOCK_FOLDER_PICKER_RESULT"] = ""
-            headers2, body2 = self._simulate_post("/api/library", {"action": "select"})
-            self.assertIn("200 OK", headers2)
-            res2 = json.loads(body2.decode("utf-8"))
-            self.assertFalse(res2["success"])
-            self.assertTrue(res2["cancelled"])
-
-            # Clean up env
-            os.environ.pop("MOCK_FOLDER_PICKER_RESULT", None)
-            os.environ.pop("LOCAL_MANGA_CONFIG_FILE", None)
+                # Test cancellation
+                os.environ["MOCK_FOLDER_PICKER_RESULT"] = ""
+                headers2, body2 = self._simulate_post("/api/library", {"action": "select"})
+                self.assertIn("200 OK", headers2)
+                res2 = json.loads(body2.decode("utf-8"))
+                self.assertFalse(res2["success"])
+                self.assertTrue(res2["cancelled"])
+            finally:
+                os.environ.pop("MOCK_FOLDER_PICKER_RESULT", None)
+                if orig_env is not None:
+                    os.environ["LOCAL_MANGA_SETTINGS_FILE"] = orig_env
+                else:
+                    os.environ.pop("LOCAL_MANGA_SETTINGS_FILE", None)
+                self.MangaRequestHandler.library = self.library
             self.MangaRequestHandler.library = self.library
 
     def test_change_library_validation_errors(self):
@@ -1666,8 +1688,8 @@ class TestWindowsLauncher(unittest.TestCase):
         self.assertIn("--dir", content)
 
     def test_server_windows_config_path_resolution(self):
-        """Verify get_config_file_path() resolves to %LOCALAPPDATA%\\LocalMangaReader\\library_path on win32."""
-        from server import get_config_file_path
+        """Verify get_settings_file_path() resolves to %LOCALAPPDATA%\\LocalMangaReader\\settings.json on win32."""
+        from server import get_config_file_path, get_settings_file_path
         orig_platform = sys.platform
         orig_env_file = os.environ.get("LOCAL_MANGA_CONFIG_FILE")
         orig_env_dir = os.environ.get("LOCAL_MANGA_CONFIG_DIR")
@@ -1679,9 +1701,10 @@ class TestWindowsLauncher(unittest.TestCase):
             os.environ.pop("LOCAL_MANGA_CONFIG_DIR", None)
             os.environ["LOCALAPPDATA"] = r"C:\Users\SampleUser\AppData\Local"
 
-            resolved = get_config_file_path()
-            expected = Path(r"C:\Users\SampleUser\AppData\Local") / "LocalMangaReader" / "library_path"
+            resolved = get_settings_file_path()
+            expected = Path(r"C:\Users\SampleUser\AppData\Local") / "LocalMangaReader" / "settings.json"
             self.assertEqual(resolved, expected)
+            self.assertEqual(get_config_file_path(), expected)
         finally:
             sys.platform = orig_platform
             if orig_env_file:
@@ -1713,7 +1736,7 @@ class TestLinuxLauncher(unittest.TestCase):
 
         # Config location
         self.assertIn("LocalMangaReader", content)
-        self.assertIn("library_path", content)
+        self.assertIn("settings.json", content)
         self.assertIn(".config", content)
 
         # Python 3 detection
@@ -1732,8 +1755,8 @@ class TestLinuxLauncher(unittest.TestCase):
         self.assertIn("--dir", content)
 
     def test_server_linux_config_path_resolution(self):
-        """Verify get_config_file_path() resolves to ~/.config/LocalMangaReader/library_path on Linux."""
-        from server import get_config_file_path
+        """Verify get_settings_file_path() resolves to ~/.config/LocalMangaReader/settings.json on Linux."""
+        from server import get_config_file_path, get_settings_file_path
         orig_platform = sys.platform
         orig_env_file = os.environ.get("LOCAL_MANGA_CONFIG_FILE")
         orig_env_dir = os.environ.get("LOCAL_MANGA_CONFIG_DIR")
@@ -1746,13 +1769,15 @@ class TestLinuxLauncher(unittest.TestCase):
 
             # Test with custom XDG_CONFIG_HOME
             os.environ["XDG_CONFIG_HOME"] = "/custom/xdg_config"
-            resolved = get_config_file_path()
-            self.assertEqual(resolved, Path("/custom/xdg_config/LocalMangaReader/library_path"))
+            resolved = get_settings_file_path()
+            self.assertEqual(resolved, Path("/custom/xdg_config/LocalMangaReader/settings.json"))
+            self.assertEqual(get_config_file_path(), Path("/custom/xdg_config/LocalMangaReader/settings.json"))
 
             # Test default ~/.config
             os.environ.pop("XDG_CONFIG_HOME", None)
-            resolved_default = get_config_file_path()
-            self.assertEqual(resolved_default, Path(os.path.expanduser("~/.config/LocalMangaReader/library_path")))
+            resolved_default = get_settings_file_path()
+            self.assertEqual(resolved_default, Path(os.path.expanduser("~/.config/LocalMangaReader/settings.json")))
+            self.assertEqual(get_config_file_path(), Path(os.path.expanduser("~/.config/LocalMangaReader/settings.json")))
         finally:
             sys.platform = orig_platform
             if orig_env_file:
@@ -1768,7 +1793,8 @@ class TestLinuxLauncher(unittest.TestCase):
         """Test start-linux.sh lifecycle: first launch, config persistence, missing folder, MANGA_DIR, and cancellation."""
         with tempfile.TemporaryDirectory() as base_tmp:
             config_dir = os.path.join(base_tmp, "config")
-            config_file = os.path.join(config_dir, "library_path")
+            config_file = os.path.join(config_dir, "settings.json")
+            legacy_file = os.path.join(config_dir, "library_path")
             lib1 = os.path.join(base_tmp, "library1")
             lib2 = os.path.join(base_tmp, "library2")
             os.makedirs(lib1)
@@ -1819,14 +1845,16 @@ fi
             env1["MOCK_FOLDER_PICKER_RESULT"] = lib1 + "/"
             p1 = subprocess.Popen([str(self.launcher_path)], env=env1, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             wait_for_file(server_log)
+            wait_for_file(browser_log)
             p1.terminate()
             p1.wait(timeout=3)
             p1.stdout.close()
             p1.stderr.close()
 
-            self.assertTrue(os.path.exists(config_file), "Config file was not created on first launch")
-            with open(config_file) as f:
-                saved = f.read().strip()
+            self.assertTrue(os.path.exists(config_file), "Settings file was not created on first launch")
+            self.assertFalse(os.path.exists(legacy_file), "Legacy standalone library_path should not be created")
+            with open(config_file, encoding="utf-8") as f:
+                saved = json.load(f).get("library_path")
             self.assertEqual(saved, lib1)
             with open(browser_log) as f:
                 self.assertIn("http://localhost:8000", f.read())
@@ -1847,8 +1875,8 @@ fi
             p2.stdout.close()
             p2.stderr.close()
 
-            with open(config_file) as f:
-                self.assertEqual(f.read().strip(), lib1)
+            with open(config_file, encoding="utf-8") as f:
+                self.assertEqual(json.load(f).get("library_path"), lib1)
             with open(server_log) as f:
                 self.assertIn(f"--dir {lib1}", f.read())
 
@@ -1865,8 +1893,8 @@ fi
             p3.stdout.close()
             p3.stderr.close()
 
-            with open(config_file) as f:
-                self.assertEqual(f.read().strip(), lib2)
+            with open(config_file, encoding="utf-8") as f:
+                self.assertEqual(json.load(f).get("library_path"), lib2)
             with open(server_log) as f:
                 self.assertIn(f"--dir {lib2}", f.read())
 
@@ -1884,8 +1912,8 @@ fi
             p4.stdout.close()
             p4.stderr.close()
 
-            with open(config_file) as f:
-                self.assertEqual(f.read().strip(), lib2, "MANGA_DIR should not overwrite config file")
+            with open(config_file, encoding="utf-8") as f:
+                self.assertEqual(json.load(f).get("library_path"), lib2, "MANGA_DIR should not overwrite config file")
             with open(server_log) as f:
                 self.assertIn(f"--dir {ext_lib}", f.read())
 
@@ -3095,7 +3123,7 @@ class TestLibraryStartupAndResolution(unittest.TestCase):
         self.assertIn("No library configured", body.decode("utf-8"))
 
     def test_cli_dir_remains_session_only(self):
-        """CLI --dir runtime override sets library for that run only and does NOT alter persisted library_path."""
+        """CLI --dir runtime override sets library for that run only and does NOT alter persisted library_path in settings.json."""
         with tempfile.TemporaryDirectory() as tmp:
             config_dir = Path(tmp) / "config"
             orig_lib_dir = Path(tmp) / "saved_manga"
@@ -3103,9 +3131,9 @@ class TestLibraryStartupAndResolution(unittest.TestCase):
             override_dir = Path(tmp) / "session_override_manga"
             override_dir.mkdir()
 
-            config_file = config_dir / "library_path"
             config_dir.mkdir(parents=True, exist_ok=True)
-            config_file.write_text(str(orig_lib_dir) + "\n", encoding="utf-8")
+            settings_file = config_dir / "settings.json"
+            settings_file.write_text(json.dumps({"library_path": str(orig_lib_dir), "theme": "crimson"}), encoding="utf-8")
 
             orig_env = os.environ.get("LOCAL_MANGA_CONFIG_DIR")
             try:
@@ -3116,7 +3144,7 @@ class TestLibraryStartupAndResolution(unittest.TestCase):
                 session_lib = MangaLibrary(str(override_dir))
                 self.assertEqual(session_lib.root_path, override_dir.resolve())
                 # Verify persisted config on disk was NOT touched
-                self.assertEqual(config_file.read_text(encoding="utf-8").strip(), str(orig_lib_dir))
+                self.assertEqual(json.loads(settings_file.read_text(encoding="utf-8")).get("library_path"), str(orig_lib_dir))
                 self.assertEqual(self.load_saved_library_path(), str(orig_lib_dir))
             finally:
                 if orig_env:
@@ -3125,7 +3153,7 @@ class TestLibraryStartupAndResolution(unittest.TestCase):
                     os.environ.pop("LOCAL_MANGA_CONFIG_DIR", None)
 
     def test_existing_folder_selection_flow_still_works(self):
-        """POST /api/library with valid folder updates in-memory library and persists path to config."""
+        """POST /api/library with valid folder updates in-memory library and persists path to settings.json."""
         with tempfile.TemporaryDirectory() as tmp:
             config_dir = Path(tmp) / "config"
             new_lib_dir = Path(tmp) / "new_manga_library"
@@ -3153,7 +3181,11 @@ class TestLibraryStartupAndResolution(unittest.TestCase):
                 self.assertEqual(self.MangaRequestHandler.library.root_path, new_lib_dir.resolve())
                 self.assertTrue(self.MangaRequestHandler.library.exists())
 
-                # Verify persisted configuration updated
+                # Verify persisted configuration updated in settings.json and legacy file is not created
+                settings_file = config_dir / "settings.json"
+                self.assertTrue(settings_file.is_file())
+                self.assertEqual(json.loads(settings_file.read_text(encoding="utf-8")).get("library_path"), str(new_lib_dir.resolve()))
+                self.assertFalse((config_dir / "library_path").exists())
                 self.assertEqual(self.load_saved_library_path(), str(new_lib_dir.resolve()))
             finally:
                 self.MangaRequestHandler.library = orig_lib
@@ -3161,6 +3193,221 @@ class TestLibraryStartupAndResolution(unittest.TestCase):
                     os.environ["LOCAL_MANGA_CONFIG_DIR"] = orig_env
                 else:
                     os.environ.pop("LOCAL_MANGA_CONFIG_DIR", None)
+
+
+class TestSettingsLibraryPathAndMigration(unittest.TestCase):
+    def setUp(self):
+        from server import (
+            MangaRequestHandler,
+            load_app_settings,
+            save_app_settings,
+            load_saved_library_path,
+            save_library_path_config,
+            get_default_library_dir,
+            get_settings_file_path,
+            get_legacy_config_file_path,
+        )
+        self.MangaRequestHandler = MangaRequestHandler
+        self.load_app_settings = load_app_settings
+        self.save_app_settings = save_app_settings
+        self.load_saved_library_path = load_saved_library_path
+        self.save_library_path_config = save_library_path_config
+        self.get_default_library_dir = get_default_library_dir
+        self.get_settings_file_path = get_settings_file_path
+        self.get_legacy_config_file_path = get_legacy_config_file_path
+
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.config_dir = Path(self.temp_dir.name) / "config"
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.orig_config_dir = os.environ.get("LOCAL_MANGA_CONFIG_DIR")
+        self.orig_settings_file = os.environ.get("LOCAL_MANGA_SETTINGS_FILE")
+        self.orig_config_file = os.environ.get("LOCAL_MANGA_CONFIG_FILE")
+        self.orig_legacy_file = os.environ.get("LOCAL_MANGA_LEGACY_CONFIG_FILE")
+        os.environ["LOCAL_MANGA_CONFIG_DIR"] = str(self.config_dir)
+        os.environ.pop("LOCAL_MANGA_SETTINGS_FILE", None)
+        os.environ.pop("LOCAL_MANGA_CONFIG_FILE", None)
+        os.environ.pop("LOCAL_MANGA_LEGACY_CONFIG_FILE", None)
+
+    def tearDown(self):
+        if self.orig_config_dir is not None:
+            os.environ["LOCAL_MANGA_CONFIG_DIR"] = self.orig_config_dir
+        else:
+            os.environ.pop("LOCAL_MANGA_CONFIG_DIR", None)
+        if self.orig_settings_file is not None:
+            os.environ["LOCAL_MANGA_SETTINGS_FILE"] = self.orig_settings_file
+        else:
+            os.environ.pop("LOCAL_MANGA_SETTINGS_FILE", None)
+        if self.orig_config_file is not None:
+            os.environ["LOCAL_MANGA_CONFIG_FILE"] = self.orig_config_file
+        else:
+            os.environ.pop("LOCAL_MANGA_CONFIG_FILE", None)
+        if self.orig_legacy_file is not None:
+            os.environ["LOCAL_MANGA_LEGACY_CONFIG_FILE"] = self.orig_legacy_file
+        else:
+            os.environ.pop("LOCAL_MANGA_LEGACY_CONFIG_FILE", None)
+        self.temp_dir.cleanup()
+
+    def _simulate_post(self, path: str, json_data: dict):
+        body_bytes = json.dumps(json_data).encode("utf-8")
+        raw_request = (
+            f"POST {path} HTTP/1.1\r\n"
+            f"Host: localhost\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: {len(body_bytes)}\r\n\r\n"
+        ).encode("utf-8") + body_bytes
+        sock = MockSocket(raw_request)
+        class CustomHandler(self.MangaRequestHandler):
+            def log_message(self, *args):
+                pass
+        CustomHandler(sock, ("127.0.0.1", 8000), None)
+        sock.wfile.seek(0)
+        resp = sock.wfile.read()
+        header_end = resp.find(b"\r\n\r\n")
+        return resp[:header_end].decode("utf-8", errors="replace"), resp[header_end + 4:]
+
+    def test_settings_stores_library_path(self):
+        """1. library_path is stored inside settings.json and load_saved_library_path reads it."""
+        sample_path = "/path/to/test/manga"
+        self.save_library_path_config(sample_path)
+        settings_file = self.config_dir / "settings.json"
+        legacy_file = self.config_dir / "library_path"
+
+        self.assertTrue(settings_file.is_file())
+        self.assertFalse(legacy_file.exists())
+        data = json.loads(settings_file.read_text(encoding="utf-8"))
+        self.assertEqual(data.get("library_path"), sample_path)
+        self.assertEqual(self.load_saved_library_path(), sample_path)
+
+    def test_new_installation_no_standalone_file_created(self):
+        """2. For a new installation, standalone library_path is not created."""
+        settings = self.load_app_settings()
+        self.assertEqual(settings.get("theme"), "crimson")
+        self.assertIsNone(self.load_saved_library_path())
+        legacy_file = self.config_dir / "library_path"
+        self.assertFalse(legacy_file.exists())
+
+    def test_legacy_library_path_migrated_to_settings(self):
+        """3. Existing standalone library_path is automatically migrated to settings.json."""
+        legacy_file = self.config_dir / "library_path"
+        legacy_path = "/legacy/manga/library"
+        legacy_file.write_text(legacy_path + "\n", encoding="utf-8")
+
+        settings = self.load_app_settings()
+        self.assertEqual(settings.get("library_path"), legacy_path)
+        self.assertEqual(settings.get("theme"), "crimson")
+
+        settings_file = self.config_dir / "settings.json"
+        self.assertTrue(settings_file.is_file())
+        saved_json = json.loads(settings_file.read_text(encoding="utf-8"))
+        self.assertEqual(saved_json.get("library_path"), legacy_path)
+        self.assertEqual(saved_json.get("theme"), "crimson")
+
+        # Standalone file removed after successful migration
+        self.assertFalse(legacy_file.exists())
+        self.assertEqual(self.load_saved_library_path(), legacy_path)
+
+    def test_migration_preserves_existing_settings(self):
+        """4. Migration preserves existing settings in settings.json (such as theme)."""
+        settings_file = self.config_dir / "settings.json"
+        settings_file.write_text(json.dumps({"theme": "kuromi", "custom": 123}), encoding="utf-8")
+
+        legacy_file = self.config_dir / "library_path"
+        legacy_path = "/migrated/manga"
+        legacy_file.write_text(legacy_path + "\n", encoding="utf-8")
+
+        settings = self.load_app_settings()
+        self.assertEqual(settings.get("theme"), "kuromi")
+        self.assertEqual(settings.get("library_path"), legacy_path)
+        self.assertEqual(settings.get("custom"), 123)
+
+        saved = json.loads(settings_file.read_text(encoding="utf-8"))
+        self.assertEqual(saved.get("theme"), "kuromi")
+        self.assertEqual(saved.get("library_path"), legacy_path)
+        self.assertEqual(saved.get("custom"), 123)
+        self.assertFalse(legacy_file.exists())
+
+    def test_failed_migration_write_does_not_delete_legacy_file(self):
+        """5. If writing settings.json fails during migration, old file is kept and path retained."""
+        legacy_file = self.config_dir / "library_path"
+        legacy_path = "/safe/legacy/manga"
+        legacy_file.write_text(legacy_path + "\n", encoding="utf-8")
+
+        with mock.patch("pathlib.Path.replace", side_effect=OSError("Disk write failed")):
+            settings = self.load_app_settings()
+            # Still returns in-memory library_path so user doesn't lose library
+            self.assertEqual(settings.get("library_path"), legacy_path)
+            # Legacy file must NOT have been deleted
+            self.assertTrue(legacy_file.is_file())
+            self.assertEqual(legacy_file.read_text(encoding="utf-8").strip(), legacy_path)
+
+    def test_cli_dir_does_not_persist_to_settings_json(self):
+        """6. --dir <path> remains session-only and does not alter settings.json."""
+        saved_path = "/persisted/lib"
+        self.save_library_path_config(saved_path)
+
+        # Session override
+        session_lib = MangaLibrary("/override/path")
+        self.assertEqual(self.load_saved_library_path(), saved_path)
+        settings_file = self.config_dir / "settings.json"
+        self.assertEqual(json.loads(settings_file.read_text(encoding="utf-8")).get("library_path"), saved_path)
+
+    def test_folder_selection_updates_settings_json_without_standalone_file(self):
+        """7. In-app folder selection saves into settings.json and never creates library_path file."""
+        with tempfile.TemporaryDirectory() as manga_dir:
+            sample_series = Path(manga_dir) / "SeriesA"
+            sample_series.mkdir()
+            ch = sample_series / "Ch1"
+            ch.mkdir()
+            (ch / "1.png").write_bytes(b"DATA")
+
+            orig_lib = self.MangaRequestHandler.library
+            try:
+                self.MangaRequestHandler.library = MangaLibrary(None)
+                h, body = self._simulate_post("/api/library", {"path": manga_dir})
+                self.assertIn("200 OK", h)
+                res = json.loads(body.decode("utf-8"))
+                self.assertTrue(res["success"])
+
+                settings_file = self.config_dir / "settings.json"
+                legacy_file = self.config_dir / "library_path"
+                self.assertTrue(settings_file.is_file())
+                self.assertFalse(legacy_file.exists())
+                self.assertEqual(json.loads(settings_file.read_text(encoding="utf-8")).get("library_path"), str(Path(manga_dir).resolve()))
+            finally:
+                self.MangaRequestHandler.library = orig_lib
+
+    def test_unconfigured_library_state_without_library_path_in_settings(self):
+        """8. Unconfigured library state when settings.json has no library_path and no legacy file."""
+        settings_file = self.config_dir / "settings.json"
+        settings_file.write_text(json.dumps({"theme": "kuromi"}), encoding="utf-8")
+
+        self.assertIsNone(self.load_saved_library_path())
+        self.assertIsNone(self.get_default_library_dir())
+        self.assertFalse((self.config_dir / "library_path").exists())
+
+    def test_theme_change_preserves_library_path(self):
+        """9. Theme updates preserve existing library_path in settings.json."""
+        lib_path = "/configured/manga/path"
+        self.save_library_path_config(lib_path)
+
+        # Update theme to kuromi
+        h1, b1 = self._simulate_post("/api/settings", {"theme": "kuromi"})
+        self.assertIn("200 OK", h1)
+        d1 = json.loads(b1.decode("utf-8"))
+        self.assertEqual(d1["theme"], "kuromi")
+
+        settings_file = self.config_dir / "settings.json"
+        disk_data = json.loads(settings_file.read_text(encoding="utf-8"))
+        self.assertEqual(disk_data.get("theme"), "kuromi")
+        self.assertEqual(disk_data.get("library_path"), lib_path)
+        self.assertEqual(self.load_saved_library_path(), lib_path)
+
+        # Update theme back to crimson
+        h2, b2 = self._simulate_post("/api/settings", {"theme": "crimson"})
+        self.assertIn("200 OK", h2)
+        disk_data2 = json.loads(settings_file.read_text(encoding="utf-8"))
+        self.assertEqual(disk_data2.get("theme"), "crimson")
+        self.assertEqual(disk_data2.get("library_path"), lib_path)
 
 
 if __name__ == "__main__":

@@ -36,11 +36,35 @@ def get_config_dir() -> Path:
     return Path(os.path.expanduser("~/Library/Application Support/LocalMangaReader"))
 
 
-def get_config_file_path() -> Path:
-    """Returns path to the library path config file outside the git repository."""
+def get_settings_file_path() -> Path:
+    """Returns path to the application settings configuration file (settings.json)."""
+    if os.environ.get("LOCAL_MANGA_SETTINGS_FILE"):
+        return Path(os.environ["LOCAL_MANGA_SETTINGS_FILE"])
     if os.environ.get("LOCAL_MANGA_CONFIG_FILE"):
-        return Path(os.environ["LOCAL_MANGA_CONFIG_FILE"])
+        p = Path(os.environ["LOCAL_MANGA_CONFIG_FILE"])
+        if p.name == "settings.json":
+            return p
+        if p.name != "library_path":
+            return p
+        return p.parent / "settings.json"
+    return get_config_dir() / "settings.json"
+
+
+def get_legacy_config_file_path() -> Path:
+    """Returns path to the legacy standalone library_path file outside the git repository."""
+    if os.environ.get("LOCAL_MANGA_LEGACY_CONFIG_FILE"):
+        return Path(os.environ["LOCAL_MANGA_LEGACY_CONFIG_FILE"])
+    if os.environ.get("LOCAL_MANGA_CONFIG_FILE"):
+        p = Path(os.environ["LOCAL_MANGA_CONFIG_FILE"])
+        if p.name == "library_path":
+            return p
+        return p.parent / "library_path"
     return get_config_dir() / "library_path"
+
+
+def get_config_file_path() -> Path:
+    """Returns path to the primary settings file (settings.json). Kept for backwards compatibility."""
+    return get_settings_file_path()
 
 
 def get_profile_file_path() -> Path:
@@ -122,47 +146,104 @@ def save_user_profile(name: str | None = None, avatar_bytes: bytes | None = None
     return load_user_profile()
 
 
-def get_settings_file_path() -> Path:
-    """Returns path to the application settings configuration file."""
-    return get_config_dir() / "settings.json"
-
-
 def load_app_settings() -> dict:
-    """Loads application settings (theme). Defaults to crimson."""
+    """
+    Loads application settings (theme, library_path, etc.) from settings.json.
+    Automatically migrates legacy standalone library_path file into settings.json if present.
+    """
     settings_file = get_settings_file_path()
-    theme = "crimson"
+    legacy_file = get_legacy_config_file_path()
+
+    raw_data: dict = {}
     if settings_file.is_file():
         try:
-            data = json.loads(settings_file.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                raw_theme = data.get("theme")
-                if raw_theme in ("crimson", "kuromi"):
-                    theme = raw_theme
+            parsed = json.loads(settings_file.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                raw_data = parsed
+        except Exception:
+            raw_data = {}
+
+    # Validate and normalize theme
+    raw_theme = raw_data.get("theme")
+    theme = raw_theme if raw_theme in ("crimson", "kuromi") else "crimson"
+
+    # Extract library_path
+    raw_lib = raw_data.get("library_path")
+    library_path = raw_lib.strip() if isinstance(raw_lib, str) and raw_lib.strip() else None
+
+    # Migration check: if settings.json does not contain library_path, check legacy standalone file
+    if library_path is None and legacy_file.is_file():
+        try:
+            legacy_content = legacy_file.read_text(encoding="utf-8").strip()
+            if legacy_content:
+                # Prepare migration payload
+                migration_payload: dict = {"theme": theme, "library_path": legacy_content}
+                for k, v in raw_data.items():
+                    if k not in ("appearance", "theme", "library_path"):
+                        migration_payload[k] = v
+
+                config_dir = settings_file.parent
+                config_dir.mkdir(parents=True, exist_ok=True)
+                temp_settings = config_dir / f"{settings_file.name}.tmp"
+                try:
+                    temp_settings.write_text(json.dumps(migration_payload, indent=2), encoding="utf-8")
+                    temp_settings.replace(settings_file)
+                    # Successful write! Remove old standalone library_path file
+                    try:
+                        legacy_file.unlink()
+                    except OSError:
+                        pass
+                    library_path = legacy_content
+                except Exception:
+                    # Write failed: clean up temp file and do NOT remove legacy file
+                    if temp_settings.is_file():
+                        try:
+                            temp_settings.unlink()
+                        except OSError:
+                            pass
+                    # Return legacy_content in-memory so user does not lose configured library
+                    library_path = legacy_content
         except Exception:
             pass
 
-    return {
-        "theme": theme
-    }
+    result: dict = {"theme": theme}
+    if library_path is not None:
+        result["library_path"] = library_path
+
+    # Preserve any other non-appearance keys
+    for k, v in raw_data.items():
+        if k not in ("appearance", "theme", "library_path"):
+            result[k] = v
+
+    return result
 
 
-def save_app_settings(theme: str | None = None) -> dict:
-    """Saves application settings (theme) to config directory."""
-    config_dir = get_config_dir()
-    config_dir.mkdir(parents=True, exist_ok=True)
+def save_app_settings(theme: str | None = None, library_path: str | None = None) -> dict:
+    """Saves application settings (theme, library_path) to settings.json."""
     settings_file = get_settings_file_path()
+    config_dir = settings_file.parent
+    config_dir.mkdir(parents=True, exist_ok=True)
 
     current = load_app_settings()
-    new_theme = current["theme"]
+    payload: dict = {}
 
+    new_theme = current.get("theme", "crimson")
     if theme is not None and theme in ("crimson", "kuromi"):
         new_theme = theme
+    payload["theme"] = new_theme
 
-    payload = {
-        "theme": new_theme
-    }
+    if library_path is not None:
+        cleaned_path = library_path.strip()
+        if cleaned_path:
+            payload["library_path"] = cleaned_path
+    elif "library_path" in current and current["library_path"]:
+        payload["library_path"] = current["library_path"]
 
-    temp_settings = config_dir / "settings.json.tmp"
+    for k, v in current.items():
+        if k not in ("appearance", "theme", "library_path"):
+            payload[k] = v
+
+    temp_settings = config_dir / f"{settings_file.name}.tmp"
     try:
         temp_settings.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         temp_settings.replace(settings_file)
@@ -172,28 +253,20 @@ def save_app_settings(theme: str | None = None) -> dict:
                 temp_settings.unlink()
             except OSError:
                 pass
+        raise
 
     return load_app_settings()
 
 
 def save_library_path_config(path_str: str) -> None:
-    """Saves configured manga library directory to config file."""
-    config_file = get_config_file_path()
-    config_file.parent.mkdir(parents=True, exist_ok=True)
-    config_file.write_text(path_str.strip() + "\n", encoding="utf-8")
+    """Saves configured manga library directory to settings.json."""
+    save_app_settings(library_path=path_str)
 
 
 def load_saved_library_path() -> str | None:
-    """Loads saved manga library directory from config file if available."""
-    config_file = get_config_file_path()
-    if config_file.is_file():
-        try:
-            content = config_file.read_text(encoding="utf-8").strip()
-            if content:
-                return content
-        except Exception:
-            pass
-    return None
+    """Loads saved manga library directory from settings.json if available."""
+    settings = load_app_settings()
+    return settings.get("library_path")
 
 
 def get_default_library_dir() -> str | None:
