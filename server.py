@@ -196,14 +196,14 @@ def load_saved_library_path() -> str | None:
     return None
 
 
-def get_default_library_dir() -> str:
-    """Resolves default library path via env override, saved config, or fallback."""
+def get_default_library_dir() -> str | None:
+    """Resolves default library path via env override or saved config. Returns None if unconfigured."""
     if os.environ.get("MANGA_DIR"):
         return os.environ["MANGA_DIR"]
     saved = load_saved_library_path()
     if saved:
         return saved
-    return os.path.expanduser("~/Manga")
+    return None
 
 
 DEFAULT_LIBRARY_DIR = get_default_library_dir()
@@ -400,14 +400,16 @@ def detect_image_format(data: bytes) -> str | None:
 class MangaLibrary:
     """Manages filesystem scanning and resolution of manga series, chapters, and images."""
 
-    def __init__(self, root_path: str):
-        self.root_path = Path(root_path).expanduser().resolve()
+    def __init__(self, root_path: str | Path | None = None):
+        self.root_path = Path(root_path).expanduser().resolve() if root_path else None
 
     def exists(self) -> bool:
-        return self.root_path.exists() and self.root_path.is_dir()
+        return bool(self.root_path and self.root_path.exists() and self.root_path.is_dir())
 
     def _is_safe_child(self, path: Path) -> bool:
         """Prevent directory traversal attacks."""
+        if not self.root_path:
+            return False
         try:
             resolved = path.resolve()
             return self.root_path in resolved.parents or resolved == self.root_path
@@ -452,7 +454,7 @@ class MangaLibrary:
         Resolves and validates a chapter path (directory or .cbz/.zip archive).
         Returns the safe Path object or None if invalid.
         """
-        if not series_name or not chapter_name:
+        if not self.root_path or not series_name or not chapter_name:
             return None
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
@@ -513,6 +515,8 @@ class MangaLibrary:
         Supports chapter subdirectories, .cbz files, and .zip files.
         Ignores hidden folders and files (starting with '.'), and unsupported loose files.
         """
+        if not self.root_path:
+            return []
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
             return []
@@ -660,6 +664,8 @@ class MangaLibrary:
         2. First image of the first naturally sorted chapter (directory or archive)
         Returns None if no cover or chapter images exist.
         """
+        if not self.root_path:
+            return None
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
             return None
@@ -688,6 +694,8 @@ class MangaLibrary:
         Resolves the cover image path for a series if located directly on disk as a file.
         Preserves backward compatibility for callers expecting a Path.
         """
+        if not self.root_path:
+            return None
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
             return None
@@ -721,6 +729,8 @@ class MangaLibrary:
         3. First image of the first naturally sorted chapter (directory or archive)
         4. None if no image exists anywhere
         """
+        if not self.root_path:
+            return None
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
             return None
@@ -740,6 +750,8 @@ class MangaLibrary:
         Resolves the atmospheric background image path for a series hero if located directly on disk as a file.
         Preserves backward compatibility.
         """
+        if not self.root_path:
+            return None
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
             return None
@@ -761,6 +773,8 @@ class MangaLibrary:
 
     def has_background_file(self, series_name: str) -> bool:
         """Checks if a dedicated background.jpg (or .jpeg) exists for a series."""
+        if not self.root_path:
+            return False
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
             return False
@@ -771,6 +785,8 @@ class MangaLibrary:
         Saves uploaded image bytes as <series_dir>/cover.jpg.
         Validates safety, format, and writes atomically.
         """
+        if not self.root_path:
+            return False
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
             return False
@@ -806,6 +822,8 @@ class MangaLibrary:
         Saves uploaded image bytes as <series_dir>/background.jpg.
         Validates safety, format, and writes atomically.
         """
+        if not self.root_path:
+            return False
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
             return False
@@ -840,6 +858,8 @@ class MangaLibrary:
         """
         Removes <series_dir>/background.jpg (and .jpeg) so series falls back to cover.
         """
+        if not self.root_path:
+            return False
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
             return False
@@ -859,6 +879,8 @@ class MangaLibrary:
         Returns default dict if file does not exist or is malformed.
         Returns None if series_name is invalid or unsafe.
         """
+        if not self.root_path:
+            return None
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
             return None
@@ -942,6 +964,8 @@ class MangaLibrary:
         """
         Saves reader data for a series inside <Series>/.reader/reader_data.json.
         """
+        if not self.root_path:
+            return False
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
             return False
@@ -1194,7 +1218,7 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
         # 0b. API: Get active library info (/api/library)
         if path == "/api/library":
             self._send_json({
-                "library_path": str(self.library.root_path),
+                "library_path": str(self.library.root_path) if self.library.root_path else None,
                 "library_exists": self.library.exists(),
                 "series_count": len(self.library.list_series()) if self.library.exists() else 0
             })
@@ -1204,7 +1228,7 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/series":
             series = self.library.list_series()
             self._send_json({
-                "library_path": str(self.library.root_path),
+                "library_path": str(self.library.root_path) if self.library.root_path else None,
                 "library_exists": self.library.exists(),
                 "series_count": len(series),
                 "series": series
@@ -1491,7 +1515,7 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
             self._send_json({
                 "status": "online",
                 "app": "Local Manga Reader (Phase 6)",
-                "library_path": str(self.library.root_path),
+                "library_path": str(self.library.root_path) if self.library.root_path else None,
                 "library_exists": self.library.exists(),
                 "endpoints": [
                     "/api/series",
@@ -1869,6 +1893,10 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 self._send_error("Missing required parameter: 'series'", HTTPStatus.BAD_REQUEST)
                 return
 
+            if not self.library.root_path:
+                self._send_error("No library configured", HTTPStatus.BAD_REQUEST)
+                return
+
             series_dir = self.library.root_path / series_name
             if not self.library._is_safe_child(series_dir) or not series_dir.is_dir():
                 self._send_error("Invalid or nonexistent series", HTTPStatus.BAD_REQUEST)
@@ -1920,6 +1948,10 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
 
             if not series_name:
                 self._send_error("Missing required parameter: 'series'", HTTPStatus.BAD_REQUEST)
+                return
+
+            if not self.library.root_path:
+                self._send_error("No library configured", HTTPStatus.BAD_REQUEST)
                 return
 
             series_dir = self.library.root_path / series_name
@@ -2033,6 +2065,10 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 self._send_error("Missing required parameter: 'series'", HTTPStatus.BAD_REQUEST)
                 return
 
+            if not self.library.root_path:
+                self._send_error("No library configured", HTTPStatus.BAD_REQUEST)
+                return
+
             series_dir = self.library.root_path / series_name
             if not self.library._is_safe_child(series_dir) or not series_dir.is_dir():
                 self._send_error("Invalid or nonexistent series", HTTPStatus.BAD_REQUEST)
@@ -2069,13 +2105,13 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
         sys.stderr.write(f"[{self.log_date_time_string()}] {format % args}\n")
 
 
-def run_server(library_dir: str, port: int = DEFAULT_PORT):
+def run_server(library_dir: str | None = None, port: int = DEFAULT_PORT):
     library = MangaLibrary(library_dir)
     print("=" * 60)
     print("  Local Manga & Manhwa Reader - Core Server (Phase 1)")
     print("=" * 60)
-    print(f"Library Directory : {library.root_path}")
-    print(f"Directory Exists  : {'Yes' if library.exists() else 'No (directory will be scanned once created)'}")
+    print(f"Library Directory : {library.root_path if library.root_path else 'None (unconfigured)'}")
+    print(f"Directory Exists  : {'Yes' if library.exists() else 'No (directory will be scanned once created or selected)'}")
     print(f"Server URL        : http://localhost:{port}")
     print("=" * 60)
     print("Available API endpoints:")
@@ -2099,14 +2135,15 @@ def run_server(library_dir: str, port: int = DEFAULT_PORT):
 
 
 def main():
+    default_dir = get_default_library_dir()
     parser = argparse.ArgumentParser(
         description="Local web-based manga/manhwa reader server (Phase 1)"
     )
     parser.add_argument(
         "--dir", "-d",
         type=str,
-        default=DEFAULT_LIBRARY_DIR,
-        help=f"Path to your manga library folder (default: {DEFAULT_LIBRARY_DIR})"
+        default=default_dir,
+        help=f"Path to your manga library folder (default: {default_dir if default_dir else 'None (unconfigured)'})"
     )
     parser.add_argument(
         "--port", "-p",

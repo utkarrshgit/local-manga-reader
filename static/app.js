@@ -590,6 +590,8 @@ document.addEventListener("DOMContentLoaded", () => {
           const data = await res.json();
           if (data && data.library_path) {
             settingsLibraryPath.textContent = data.library_path;
+          } else {
+            settingsLibraryPath.textContent = "No folder selected";
           }
         }
       } catch {
@@ -1184,7 +1186,13 @@ document.addEventListener("DOMContentLoaded", () => {
         if (libraryUnavailable) {
           libraryUnavailable.classList.remove("hidden");
           if (unavailableFolderPath) {
-            unavailableFolderPath.textContent = data.library_path || "Unknown path";
+            if (data.library_path) {
+              unavailableFolderPath.textContent = data.library_path;
+              unavailableFolderPath.classList.remove("hidden");
+            } else {
+              unavailableFolderPath.textContent = "";
+              unavailableFolderPath.classList.add("hidden");
+            }
           }
         }
         librarySubtitle.textContent = "Folder unavailable";

@@ -30,9 +30,9 @@ A local manga and manhwa reader that runs in your web browser.
 
 ### macOS
 
-Double-click `start-mac.command`.
+Double-click `start-mac.command` (or run `python3 server.py`).
 
-On the first launch, select your manga library folder.
+If no library folder is configured yet, the app opens in Safari and prompts you to select your manga library folder.
 
 ### Windows
 
@@ -89,10 +89,11 @@ Reader data is stored separately inside each series in a `.reader` folder.
 
 ## Changing the Library Folder
 
-You can change the manga library folder from the Library page using **Change Manga Folder**.
+You can choose or change the manga library folder at any time directly in the app (via the **Choose another folder** button when unconfigured, or from the profile **Settings** menu).
 Your manga library can be stored anywhere on your computer and does not need to be inside the project folder.
 
 The selected folder is saved locally so you don't have to choose it every time you launch the app.
+You can also run `python3 server.py --dir <path>` to temporarily override the library folder for that session without modifying your saved configuration.
 
 ## Reading
 
