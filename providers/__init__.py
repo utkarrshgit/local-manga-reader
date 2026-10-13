@@ -43,6 +43,10 @@ from providers.security import (
     is_safe_ip,
     validate_provider_target_url,
 )
+from providers.service import (
+    RemoteReaderService,
+    is_remote_series,
+)
 
 __all__ = [
     "BaseProvider",
@@ -76,4 +80,6 @@ __all__ = [
     "RedirectSecurityError",
     "MaxRedirectsExceededError",
     "MockProvider",
+    "RemoteReaderService",
+    "is_remote_series",
 ]

@@ -1850,6 +1850,14 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!chaptersRes.ok) throw new Error(`HTTP error ${chaptersRes.status}`);
       const data = await chaptersRes.json();
 
+      if (data && data.title) {
+        seriesTitle.textContent = data.title;
+        if (headerSeriesTitle) {
+          headerSeriesTitle.textContent = data.title;
+          headerSeriesTitle.title = `Scroll ${data.title} to top`;
+        }
+      }
+
       currentSeries = seriesName;
       currentSeriesBookmarks = new Set(readerData.bookmarks || []);
       currentSeriesProgress = readerData.progress || {};
@@ -1957,7 +1965,7 @@ document.addEventListener("DOMContentLoaded", () => {
               <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
             </svg>
           </button>
-          <span class="chapter-title">${escapeHtml(ch.name)}</span>
+          <span class="chapter-title">${escapeHtml(ch.title || ch.name)}</span>
         </div>
         <div class="chapter-actions">
           <span class="chapter-progress">${progressPct != null ? `${progressPct}%` : ""}</span>
@@ -2030,6 +2038,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (!imagesRes.ok) throw new Error(`HTTP error ${imagesRes.status}`);
       const data = await imagesRes.json();
+
+      if (chaptersData && chaptersData.title) {
+        readerSeriesName.textContent = chaptersData.title;
+      }
+      const currentChObj = (chaptersData.chapters || []).find((c) => c.name === chapterName);
+      if (currentChObj && currentChObj.title) {
+        readerChapterName.textContent = currentChObj.title;
+      }
 
       currentSeriesBookmarks = new Set(readerData.bookmarks || []);
       currentSeriesProgress = readerData.progress || {};

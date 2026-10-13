@@ -26,14 +26,33 @@ class MockProvider(BaseProvider):
         self,
         series_data: Optional[Dict[str, RemoteSeries]] = None,
         simulate_error: bool = False,
+        images_data: Optional[Dict[str, bytes]] = None,
     ) -> None:
         self.simulate_error = simulate_error
         self._series: Dict[str, RemoteSeries] = {}
+        self._images: Dict[str, bytes] = dict(images_data or {})
 
         if series_data is not None:
             self._series = dict(series_data)
         else:
             self._init_fixtures()
+
+    def get_image(self, url: str, headers: Optional[Dict[str, str]] = None) -> bytes:
+        """Return image bytes for a mock image URL or default 1x1 PNG."""
+        if self.simulate_error:
+            raise RuntimeError("Simulated provider error")
+        from providers.security import validate_provider_target_url
+        validate_provider_target_url(url, self.allowed_domains)
+        if not self.can_handle_url(url):
+            raise ValueError(f"URL '{url}' is not handled by this provider.")
+        if url in self._images:
+            return self._images[url]
+        # Return deterministic 1x1 transparent PNG bytes
+        return (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+            b"\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00"
+            b"\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
 
     def _init_fixtures(self) -> None:
         """Initialize mock series fixtures."""

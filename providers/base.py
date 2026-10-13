@@ -166,3 +166,15 @@ class BaseProvider(ABC):
     def get_chapter_pages(self, chapter_url_or_id: str) -> List[RemotePage]:
         """Fetch remote page URLs and headers for a single chapter."""
         pass
+
+    def get_image(self, url: str, headers: Optional[Dict[str, str]] = None) -> bytes:
+        """
+        Fetch image bytes for a remote URL through the SSRF-protected SecureHttpClient.
+        Subclasses can override if they provide in-memory fixtures (like MockProvider).
+        """
+        from providers.security import SecurityPolicy, SecureHttpClient, validate_provider_target_url
+        validate_provider_target_url(url, self.allowed_domains)
+        policy = SecurityPolicy(allowed_hosts=self.allowed_domains)
+        client = SecureHttpClient(policy=policy)
+        resp = client.get(url, headers=headers)
+        return resp.body

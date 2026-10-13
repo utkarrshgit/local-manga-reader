@@ -18,6 +18,15 @@ from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote, quote
 
+from providers import (
+    DisallowedHostError,
+    InvalidSchemeError,
+    ProviderNotFoundError,
+    RemoteReaderService,
+    SSRFSecurityError,
+    is_remote_series,
+)
+
 DEFAULT_PORT = 8000
 
 
@@ -1222,6 +1231,7 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
 
     library: MangaLibrary
     static_dir: Path
+    remote_service: RemoteReaderService = RemoteReaderService()
 
     def _send_json(self, data, status: int = HTTPStatus.OK):
         body = json.dumps(data, indent=2).encode("utf-8")
@@ -1297,6 +1307,165 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
             })
             return
 
+        # 0c. Remote Provider API Endpoints
+        if path == "/api/remote/resolve":
+            target_url = get_param("url")
+            if not target_url:
+                self._send_error("Missing required query parameter: 'url'", HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                res = self.remote_service.resolve_series(target_url)
+                self._send_json(res)
+            except (InvalidSchemeError, DisallowedHostError, SSRFSecurityError, ValueError) as e:
+                self._send_error(str(e), HTTPStatus.BAD_REQUEST)
+            except (ProviderNotFoundError, KeyError) as e:
+                self._send_error(str(e), HTTPStatus.NOT_FOUND)
+            except Exception as e:
+                self._send_error(f"Remote provider error: {e}", HTTPStatus.BAD_GATEWAY)
+            return
+
+        if path == "/api/remote/series":
+            target = get_param("url") or get_param("series") or get_param("id")
+            provider_id = get_param("provider")
+            if not target:
+                self._send_error("Missing required parameter: 'url' or 'series'", HTTPStatus.BAD_REQUEST)
+                return
+            if provider_id and not target.startswith("remote:") and "://" not in target:
+                target = f"remote:{provider_id}:{target}"
+            try:
+                res = self.remote_service.resolve_series(target)
+                self._send_json(res)
+            except (InvalidSchemeError, DisallowedHostError, SSRFSecurityError, ValueError) as e:
+                self._send_error(str(e), HTTPStatus.BAD_REQUEST)
+            except (ProviderNotFoundError, KeyError) as e:
+                self._send_error(str(e), HTTPStatus.NOT_FOUND)
+            except Exception as e:
+                self._send_error(f"Remote provider error: {e}", HTTPStatus.BAD_GATEWAY)
+            return
+
+        if path == "/api/remote/chapters":
+            series_param = get_param("series") or get_param("url")
+            provider_id = get_param("provider")
+            if not series_param:
+                self._send_error("Missing required parameter: 'series' or 'url'", HTTPStatus.BAD_REQUEST)
+                return
+            if provider_id and not series_param.startswith("remote:") and "://" not in series_param:
+                series_param = f"remote:{provider_id}:{series_param}"
+            try:
+                res = self.remote_service.get_chapters(series_param)
+                self._send_json(res)
+            except (InvalidSchemeError, DisallowedHostError, SSRFSecurityError, ValueError) as e:
+                self._send_error(str(e), HTTPStatus.BAD_REQUEST)
+            except (ProviderNotFoundError, KeyError) as e:
+                self._send_error(str(e), HTTPStatus.NOT_FOUND)
+            except Exception as e:
+                self._send_error(f"Remote provider error: {e}", HTTPStatus.BAD_GATEWAY)
+            return
+
+        if path == "/api/remote/images":
+            series_param = get_param("series") or get_param("url")
+            chapter_param = get_param("chapter")
+            provider_id = get_param("provider")
+            if not series_param or not chapter_param:
+                self._send_error("Missing required parameters: 'series' and 'chapter'", HTTPStatus.BAD_REQUEST)
+                return
+            if provider_id and not series_param.startswith("remote:") and "://" not in series_param:
+                series_param = f"remote:{provider_id}:{series_param}"
+            try:
+                res = self.remote_service.get_chapter_images_for_reader(series_param, chapter_param)
+                self._send_json(res)
+            except (InvalidSchemeError, DisallowedHostError, SSRFSecurityError, ValueError) as e:
+                self._send_error(str(e), HTTPStatus.BAD_REQUEST)
+            except (ProviderNotFoundError, KeyError) as e:
+                self._send_error(str(e), HTTPStatus.NOT_FOUND)
+            except Exception as e:
+                self._send_error(f"Remote provider error: {e}", HTTPStatus.BAD_GATEWAY)
+            return
+
+        if path == "/api/remote/image-proxy":
+            img_url = get_param("url")
+            provider_id = get_param("provider")
+            if not img_url or not provider_id:
+                self._send_error("Missing required query parameters: 'url' and 'provider'", HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                data, mime_type = self.remote_service.stream_page_image(provider_id, img_url)
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", mime_type)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Cache-Control", "public, max-age=86400")
+                self.end_headers()
+                try:
+                    self.wfile.write(data)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+            except (InvalidSchemeError, DisallowedHostError, SSRFSecurityError, ValueError) as e:
+                self._send_error(str(e), HTTPStatus.BAD_REQUEST)
+            except (ProviderNotFoundError, KeyError) as e:
+                self._send_error(str(e), HTTPStatus.NOT_FOUND)
+            except Exception as e:
+                self._send_error(f"Image proxy error: {e}", HTTPStatus.BAD_GATEWAY)
+            return
+
+        if path == "/api/remote/cover":
+            series_param = get_param("series")
+            if not series_param:
+                self._send_error("Missing required query parameter: 'series'", HTTPStatus.BAD_REQUEST)
+                return
+            cover_info = self.remote_service.get_cover(series_param)
+            if not cover_info:
+                self._send_error(f"Cover not found for series: {series_param}", HTTPStatus.NOT_FOUND)
+                return
+            data, mime_type = cover_info
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", mime_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.end_headers()
+            try:
+                self.wfile.write(data)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
+
+        if path == "/api/remote/background":
+            series_param = get_param("series")
+            if not series_param:
+                self._send_error("Missing required query parameter: 'series'", HTTPStatus.BAD_REQUEST)
+                return
+            bg_info = self.remote_service.get_background(series_param)
+            if not bg_info:
+                self._send_error(f"Background not found for series: {series_param}", HTTPStatus.NOT_FOUND)
+                return
+            data, mime_type = bg_info
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", mime_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.end_headers()
+            try:
+                self.wfile.write(data)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
+
+        if path == "/api/remote/reader-data":
+            series_param = get_param("series")
+            if not series_param:
+                self._send_error("Missing required query parameter: 'series'", HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                res = self.remote_service.get_reader_data(series_param)
+                self._send_json(res)
+            except (ProviderNotFoundError, KeyError) as e:
+                self._send_error(str(e), HTTPStatus.NOT_FOUND)
+            except Exception as e:
+                self._send_error(str(e), HTTPStatus.BAD_REQUEST)
+            return
+
         # 1. API: List all series
         if path == "/api/series":
             series = self.library.list_series()
@@ -1315,6 +1484,18 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 self._send_error("Missing required query parameter: 'series'", HTTPStatus.BAD_REQUEST)
                 return
 
+            if is_remote_series(series_name):
+                try:
+                    res = self.remote_service.get_chapters(series_name)
+                    self._send_json(res)
+                except (InvalidSchemeError, DisallowedHostError, SSRFSecurityError, ValueError) as e:
+                    self._send_error(str(e), HTTPStatus.BAD_REQUEST)
+                except (ProviderNotFoundError, KeyError) as e:
+                    self._send_error(str(e), HTTPStatus.NOT_FOUND)
+                except Exception as e:
+                    self._send_error(f"Remote provider error: {e}", HTTPStatus.BAD_GATEWAY)
+                return
+
             chapters = self.library.list_chapters(series_name)
             self._send_json({
                 "series": series_name,
@@ -1329,6 +1510,18 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
             chapter_name = get_param("chapter")
             if not series_name or not chapter_name:
                 self._send_error("Missing required query parameters: 'series' and 'chapter'", HTTPStatus.BAD_REQUEST)
+                return
+
+            if is_remote_series(series_name):
+                try:
+                    res = self.remote_service.get_chapter_images_for_reader(series_name, chapter_name)
+                    self._send_json(res)
+                except (InvalidSchemeError, DisallowedHostError, SSRFSecurityError, ValueError) as e:
+                    self._send_error(str(e), HTTPStatus.BAD_REQUEST)
+                except (ProviderNotFoundError, KeyError) as e:
+                    self._send_error(str(e), HTTPStatus.NOT_FOUND)
+                except Exception as e:
+                    self._send_error(f"Remote provider error: {e}", HTTPStatus.BAD_GATEWAY)
                 return
 
             images = self.library.list_images(series_name, chapter_name)
@@ -1356,6 +1549,41 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
 
             if not series_name or not chapter_name or not file_name:
                 self._send_error("Missing required query parameters: 'series', 'chapter', 'file'", HTTPStatus.BAD_REQUEST)
+                return
+
+            if "/" in file_name or "\\" in file_name or ".." in file_name:
+                self._send_error(f"Image not found: {file_name}", HTTPStatus.NOT_FOUND)
+                return
+
+            if is_remote_series(series_name):
+                try:
+                    pages = self.remote_service.get_chapter_pages(series_name, chapter_name)
+                    provider, _ = self.remote_service.parse_series_identifier(series_name)
+                    target_page = None
+                    for idx, p in enumerate(pages, start=1):
+                        if f"{idx}.jpg" == file_name or str(p.index) == file_name or f"{p.index}.jpg" == file_name:
+                            target_page = p
+                            break
+                    if not target_page:
+                        self._send_error(f"Image not found: {file_name}", HTTPStatus.NOT_FOUND)
+                        return
+                    data, mime_type = self.remote_service.stream_page_image(provider.id, target_page.url)
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", mime_type)
+                    self.send_header("Content-Length", str(len(data)))
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.send_header("Cache-Control", "public, max-age=86400")
+                    self.end_headers()
+                    try:
+                        self.wfile.write(data)
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+                except (ProviderNotFoundError, KeyError) as e:
+                    self._send_error(str(e), HTTPStatus.NOT_FOUND)
+                except (InvalidSchemeError, DisallowedHostError, SSRFSecurityError, ValueError) as e:
+                    self._send_error(str(e), HTTPStatus.BAD_REQUEST)
+                except Exception as e:
+                    self._send_error(f"Remote image error: {e}", HTTPStatus.BAD_GATEWAY)
                 return
 
             info = self.library.get_chapter_image_info(series_name, chapter_name, file_name)
@@ -1404,6 +1632,22 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
             series_name = get_param("series")
             if not series_name:
                 self._send_error("Missing required query parameter: 'series'", HTTPStatus.BAD_REQUEST)
+                return
+
+            if is_remote_series(series_name):
+                cover_info = self.remote_service.get_cover(series_name)
+                if not cover_info:
+                    self._send_error(f"Cover not found for series: {series_name}", HTTPStatus.NOT_FOUND)
+                    return
+                data, mime_type = cover_info
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", mime_type)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
+                self.end_headers()
+                self.wfile.write(data)
                 return
 
             cover_info = self.library.get_cover_source(series_name)
@@ -1473,6 +1717,22 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 self._send_error("Missing required query parameter: 'series'", HTTPStatus.BAD_REQUEST)
                 return
 
+            if is_remote_series(series_name):
+                bg_info = self.remote_service.get_background(series_name)
+                if not bg_info:
+                    self._send_error(f"Background not found for series: {series_name}", HTTPStatus.NOT_FOUND)
+                    return
+                data, mime_type = bg_info
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", mime_type)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
+                self.end_headers()
+                self.wfile.write(data)
+                return
+
             bg_info = self.library.get_background_source(series_name)
             if not bg_info:
                 self._send_error(f"Background not found for series: {series_name}", HTTPStatus.NOT_FOUND)
@@ -1538,6 +1798,16 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
             series_name = get_param("series")
             if not series_name:
                 self._send_error("Missing required query parameter: 'series'", HTTPStatus.BAD_REQUEST)
+                return
+
+            if is_remote_series(series_name):
+                try:
+                    res = self.remote_service.get_reader_data(series_name)
+                    self._send_json(res)
+                except (ProviderNotFoundError, KeyError) as e:
+                    self._send_error(str(e), HTTPStatus.NOT_FOUND)
+                except Exception as e:
+                    self._send_error(str(e), HTTPStatus.BAD_REQUEST)
                 return
 
             data = self.library.get_reader_data(series_name)
@@ -1728,6 +1998,60 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"success": True, **updated})
             return
 
+        # 0d. Remote Provider POST Endpoints
+        if path == "/api/remote/progress":
+            body = self._read_json_body()
+            if not body:
+                self._send_error("Invalid or missing JSON body", HTTPStatus.BAD_REQUEST)
+                return
+            series = body.get("series")
+            chapter = body.get("chapter")
+            image = body.get("image")
+            if not series or not chapter or not image:
+                self._send_error("Missing required fields: 'series', 'chapter', 'image'", HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                data = self.remote_service.update_progress(series, chapter, image)
+                self._send_json({"success": True, **data})
+            except Exception as e:
+                self._send_error(str(e), HTTPStatus.BAD_REQUEST)
+            return
+
+        if path == "/api/remote/bookmark":
+            body = self._read_json_body()
+            if not body:
+                self._send_error("Invalid or missing JSON body", HTTPStatus.BAD_REQUEST)
+                return
+            series = body.get("series")
+            chapter = body.get("chapter")
+            bookmarked = body.get("bookmarked")
+            if not series or not chapter:
+                self._send_error("Missing required fields: 'series', 'chapter'", HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                data = self.remote_service.toggle_bookmark(series, chapter, bookmarked)
+                self._send_json({"success": True, **data})
+            except Exception as e:
+                self._send_error(str(e), HTTPStatus.BAD_REQUEST)
+            return
+
+        if path == "/api/remote/style":
+            body = self._read_json_body()
+            if not body:
+                self._send_error("Invalid or missing JSON body", HTTPStatus.BAD_REQUEST)
+                return
+            series = body.get("series")
+            style = body.get("style")
+            if not series or not style or style not in ("spaced", "seamless"):
+                self._send_error("Invalid or missing fields: 'series', 'style'", HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                data = self.remote_service.update_reader_style(series, style)
+                self._send_json({"success": True, **data})
+            except Exception as e:
+                self._send_error(str(e), HTTPStatus.BAD_REQUEST)
+            return
+
         # 1. API: Update reading progress (/api/progress)
         if path == "/api/progress":
             body = self._read_json_body()
@@ -1741,6 +2065,21 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
 
             if not series or not chapter or not image:
                 self._send_error("Missing required fields: 'series', 'chapter', 'image'", HTTPStatus.BAD_REQUEST)
+                return
+
+            if is_remote_series(series):
+                try:
+                    data = self.remote_service.update_progress(series, chapter, image)
+                    self._send_json({
+                        "success": True,
+                        "series": series,
+                        "chapter": chapter,
+                        "progress": data["progress"],
+                        "bookmarks": data["bookmarks"],
+                        "reader": data["reader"]
+                    })
+                except Exception as e:
+                    self._send_error(str(e), HTTPStatus.BAD_REQUEST)
                 return
 
             data = self.library.update_progress(series, chapter, image)
@@ -1771,6 +2110,22 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
 
             if not series or not chapter:
                 self._send_error("Missing required fields: 'series', 'chapter'", HTTPStatus.BAD_REQUEST)
+                return
+
+            if is_remote_series(series):
+                try:
+                    data = self.remote_service.toggle_bookmark(series, chapter, bookmarked)
+                    self._send_json({
+                        "success": True,
+                        "series": series,
+                        "chapter": chapter,
+                        "bookmarked": chapter in data["bookmarks"],
+                        "progress": data["progress"],
+                        "bookmarks": data["bookmarks"],
+                        "reader": data["reader"]
+                    })
+                except Exception as e:
+                    self._send_error(str(e), HTTPStatus.BAD_REQUEST)
                 return
 
             data = self.library.toggle_bookmark(series, chapter, bookmarked)
@@ -1805,6 +2160,21 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
 
             if style not in ("spaced", "seamless"):
                 self._send_error("Invalid style value. Allowed: 'spaced', 'seamless'", HTTPStatus.BAD_REQUEST)
+                return
+
+            if is_remote_series(series):
+                try:
+                    data = self.remote_service.update_reader_style(series, style)
+                    self._send_json({
+                        "success": True,
+                        "series": series,
+                        "style": data["reader"]["style"],
+                        "progress": data["progress"],
+                        "bookmarks": data["bookmarks"],
+                        "reader": data["reader"]
+                    })
+                except Exception as e:
+                    self._send_error(str(e), HTTPStatus.BAD_REQUEST)
                 return
 
             data = self.library.update_reader_style(series, style)
@@ -1844,6 +2214,68 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 "metadata" in body or
                 (action is None and chapter is None and ("summary" in body or "author" in body or "links" in body))
             )
+
+            if is_remote_series(series):
+                if is_metadata_action:
+                    self._send_error("Metadata editing is not supported for remote series", HTTPStatus.BAD_REQUEST)
+                    return
+
+                if action == "style" or (action is None and "style" in body):
+                    style = body.get("style")
+                    if not style or style not in ("spaced", "seamless"):
+                        self._send_error("Invalid or missing style value", HTTPStatus.BAD_REQUEST)
+                        return
+                    try:
+                        remote_data = self.remote_service.update_reader_style(series, style)
+                        self._send_json({
+                            "success": True,
+                            "series": series,
+                            "progress": remote_data["progress"],
+                            "bookmarks": remote_data["bookmarks"],
+                            "reader": remote_data["reader"],
+                        })
+                    except Exception as e:
+                        self._send_error(str(e), HTTPStatus.BAD_REQUEST)
+                    return
+                else:
+                    if not chapter:
+                        self._send_error("Missing required field: 'chapter'", HTTPStatus.BAD_REQUEST)
+                        return
+
+                    if action == "progress" or "image" in body:
+                        image = body.get("image")
+                        if not image:
+                            self._send_error("Missing required field: 'image'", HTTPStatus.BAD_REQUEST)
+                            return
+                        try:
+                            remote_data = self.remote_service.update_progress(series, chapter, image)
+                            self._send_json({
+                                "success": True,
+                                "series": series,
+                                "progress": remote_data["progress"],
+                                "bookmarks": remote_data["bookmarks"],
+                                "reader": remote_data["reader"],
+                            })
+                        except Exception as e:
+                            self._send_error(str(e), HTTPStatus.BAD_REQUEST)
+                        return
+                    elif action == "bookmark" or "bookmarked" in body:
+                        bookmarked = body.get("bookmarked")
+                        try:
+                            remote_data = self.remote_service.toggle_bookmark(series, chapter, bookmarked)
+                            self._send_json({
+                                "success": True,
+                                "series": series,
+                                "progress": remote_data["progress"],
+                                "bookmarks": remote_data["bookmarks"],
+                                "reader": remote_data["reader"],
+                            })
+                        except Exception as e:
+                            self._send_error(str(e), HTTPStatus.BAD_REQUEST)
+                        return
+                    else:
+                        self._send_error("Unrecognized action or missing payload in /api/reader-data", HTTPStatus.BAD_REQUEST)
+                        return
 
             if is_metadata_action:
                 meta_payload = body.get("metadata") if isinstance(body.get("metadata"), dict) else body
@@ -1966,6 +2398,10 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 self._send_error("Missing required parameter: 'series'", HTTPStatus.BAD_REQUEST)
                 return
 
+            if is_remote_series(series_name):
+                self._send_error("Cover upload is not supported for remote series", HTTPStatus.BAD_REQUEST)
+                return
+
             if not self.library.root_path:
                 self._send_error("No library configured", HTTPStatus.BAD_REQUEST)
                 return
@@ -2021,6 +2457,10 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
 
             if not series_name:
                 self._send_error("Missing required parameter: 'series'", HTTPStatus.BAD_REQUEST)
+                return
+
+            if is_remote_series(series_name):
+                self._send_error("Background modification is not supported for remote series", HTTPStatus.BAD_REQUEST)
                 return
 
             if not self.library.root_path:
@@ -2197,6 +2637,7 @@ def run_server(library_dir: str | None = None, port: int = DEFAULT_PORT):
 
     MangaRequestHandler.library = library
     MangaRequestHandler.static_dir = Path(__file__).parent / "static"
+    MangaRequestHandler.remote_service = RemoteReaderService()
 
     server = ThreadingHTTPServer(("127.0.0.1", port), MangaRequestHandler)
     server.daemon_threads = True
