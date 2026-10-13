@@ -53,10 +53,22 @@ cleanup() {
 trap cleanup INT TERM HUP EXIT
 
 # 5. Start server.py in the background
+export LOCAL_MANGA_LAUNCHER=1
+TARGET_OPEN_URL="${SERVER_URL}"
+for arg in "$@"; do
+    if [[ "$arg" =~ ^https?:// ]] || [[ "$arg" =~ ^remote: ]]; then
+        TARGET_OPEN_URL="${SERVER_URL}/#/series/$(python3 -c 'import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$arg")"
+        break
+    fi
+done
+
 echo "============================================================"
 echo "  Starting Local Manga Reader..."
 echo "============================================================"
 echo "Server URL : $SERVER_URL"
+if [ "$TARGET_OPEN_URL" != "$SERVER_URL" ]; then
+echo "Startup    : $TARGET_OPEN_URL"
+fi
 echo "============================================================"
 echo ""
 
@@ -95,14 +107,14 @@ done
 
 # 7. Open Safari once server is confirmed ready
 if [ $SERVER_READY -eq 1 ]; then
-    echo "Server is ready! Opening Safari to ${SERVER_URL}..."
+    echo "Server is ready! Opening Safari to ${TARGET_OPEN_URL}..."
     if command -v open >/dev/null 2>&1; then
-        open -a Safari "${SERVER_URL}"
+        open -a Safari "${TARGET_OPEN_URL}"
     fi
 else
     echo "Warning: Timeout waiting for server response. Opening Safari..."
     if command -v open >/dev/null 2>&1; then
-        open -a Safari "${SERVER_URL}"
+        open -a Safari "${TARGET_OPEN_URL}"
     fi
 fi
 

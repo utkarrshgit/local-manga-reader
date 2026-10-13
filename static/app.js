@@ -2347,6 +2347,9 @@ document.addEventListener("DOMContentLoaded", () => {
           pageCount = data.chapters[0].image_count;
         }
         saveRecentRemoteSeries(canonicalId, sTitle, data ? data.url : "", { pageCount, provider: data ? data.provider : undefined });
+        if (window.location.hash !== `#/series/${encodeURIComponent(canonicalId)}`) {
+          history.replaceState(null, "", `#/series/${encodeURIComponent(canonicalId)}`);
+        }
       }
 
       currentSeriesBookmarks = new Set(readerData.bookmarks || []);
@@ -3237,11 +3240,29 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
+  // Check if server specified a startup route (e.g. CLI remote URL)
+  async function checkStartupRoute() {
+    if (window.location.hash && window.location.hash !== "#/" && window.location.hash !== "#") return;
+    try {
+      const res = await fetch("/api/status");
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.startup_url && (!window.location.hash || window.location.hash === "#/" || window.location.hash === "#")) {
+          const hashIdx = data.startup_url.indexOf("#");
+          if (hashIdx !== -1) {
+            window.location.hash = data.startup_url.slice(hashIdx);
+          }
+        }
+      }
+    } catch {}
+  }
+
   // Initial load
   updateLibrarySortUI();
   updateChapterOrderUI();
   loadSettings();
   loadProfile();
   loadSupportedProviders();
+  checkStartupRoute();
   handleRoute();
 });

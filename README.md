@@ -87,11 +87,15 @@ You can choose or switch your manga library folder at any time directly inside t
 
 ## CLI Reference
 
-You can pass command-line arguments when launching via `python3 server.py`:
+You can pass command-line arguments when launching via `python3 server.py` (or `python3 main.py`):
 
 ```bash
 # Start server with your saved library folder
 python3 server.py
+
+# Directly open a remote manga or manhwa URL in the reader
+python3 server.py "https://nhentai.net/g/686216/"
+python3 main.py "https://weebcentral.com/series/01J76XY8CM99/chainsaw-man"
 
 # Temporarily use another manga folder for this session only (does not change your saved library)
 python3 server.py --dir /path/to/manga
@@ -103,6 +107,7 @@ python3 server.py --port 9000
 python3 server.py --help
 ```
 
+- `url`: Optional supported remote manga/manhwa URL (e.g. nhentai, WeebCentral) to open directly in the reader on startup.
 - `--dir <path>`: Temporarily overrides the active library for that server session without modifying your saved settings.
 - `--port <port>`: Changes the port the server listens on (default: `8000`).
 

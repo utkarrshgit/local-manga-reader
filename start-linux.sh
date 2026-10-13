@@ -141,6 +141,17 @@ check_server_status() {
 }
 
 # 5. Resolve manga directory
+REMOTE_URL_ARG=""
+TARGET_OPEN_URL="${SERVER_URL}"
+for arg in "$@"; do
+    if [[ "$arg" =~ ^https?:// ]] || [[ "$arg" =~ ^remote: ]]; then
+        REMOTE_URL_ARG="$arg"
+        TARGET_OPEN_URL="${SERVER_URL}/#/series/$("$PYTHON_BIN" -c 'import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$arg")"
+        break
+    fi
+done
+export LOCAL_MANGA_LAUNCHER=1
+
 TARGET_MANGA_DIR=""
 
 if [ -n "$MANGA_DIR" ]; then
@@ -176,6 +187,8 @@ else
 
     if [ $FORCE_CHOOSE -eq 0 ] && [ -n "$SAVED_PATH" ] && [ -d "$SAVED_PATH" ]; then
         TARGET_MANGA_DIR="$SAVED_PATH"
+    elif [ $FORCE_CHOOSE -eq 0 ] && [ -n "$REMOTE_URL_ARG" ]; then
+        TARGET_MANGA_DIR=""
     else
         if [ $FORCE_CHOOSE -eq 1 ]; then
             PICKER_PROMPT="Select your Manga library folder:"
@@ -260,14 +273,24 @@ echo "  Starting Local Manga Reader..."
 echo "============================================================"
 echo "Library Directory : $TARGET_MANGA_DIR"
 echo "Server URL        : $SERVER_URL"
+if [ "$TARGET_OPEN_URL" != "$SERVER_URL" ]; then
+echo "Startup           : $TARGET_OPEN_URL"
+fi
 echo "============================================================"
 echo ""
 
-if [ "$PORT" = "8000" ]; then
-    "$PYTHON_BIN" server.py --dir "$TARGET_MANGA_DIR" &
-else
-    "$PYTHON_BIN" server.py --dir "$TARGET_MANGA_DIR" --port "$PORT" &
+CMD_ARGS=()
+if [ -n "$TARGET_MANGA_DIR" ]; then
+    CMD_ARGS+=(--dir "$TARGET_MANGA_DIR")
 fi
+if [ "$PORT" != "8000" ]; then
+    CMD_ARGS+=(--port "$PORT")
+fi
+if [ -n "$REMOTE_URL_ARG" ]; then
+    CMD_ARGS+=("$REMOTE_URL_ARG")
+fi
+
+"$PYTHON_BIN" server.py "${CMD_ARGS[@]}" &
 SERVER_PID=$!
 
 # 8. Wait until server has successfully started and listens on port
@@ -300,11 +323,11 @@ done
 
 # 9. Open default browser once server is confirmed ready
 if [ $SERVER_READY -eq 1 ]; then
-    echo "Server is ready! Opening default browser to ${SERVER_URL}..."
-    open_browser "${SERVER_URL}"
+    echo "Server is ready! Opening default browser to ${TARGET_OPEN_URL}..."
+    open_browser "${TARGET_OPEN_URL}"
 else
     echo "Warning: Timeout waiting for server response. Opening browser..."
-    open_browser "${SERVER_URL}"
+    open_browser "${TARGET_OPEN_URL}"
 fi
 
 # 10. Keep server process running while launcher is active

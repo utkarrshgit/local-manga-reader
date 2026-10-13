@@ -12,6 +12,8 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+import webbrowser
 import zipfile
 from http import HTTPStatus
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -1232,6 +1234,7 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
     library: MangaLibrary
     static_dir: Path
     remote_service: RemoteReaderService = RemoteReaderService()
+    startup_url: str | None = None
 
     def _send_json(self, data, status: int = HTTPStatus.OK):
         body = json.dumps(data, indent=2).encode("utf-8")
@@ -1865,6 +1868,7 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 "app": "Local Manga Reader (Phase 6)",
                 "library_path": str(self.library.root_path) if self.library.root_path else None,
                 "library_exists": self.library.exists(),
+                "startup_url": self.startup_url,
                 "endpoints": [
                     "/api/series",
                     "/api/chapters?series=<series_name>",
@@ -2623,7 +2627,11 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
         sys.stderr.write(f"[{self.log_date_time_string()}] {format % args}\n")
 
 
-def run_server(library_dir: str | None = None, port: int = DEFAULT_PORT):
+def run_server(
+    library_dir: str | None = None,
+    port: int = DEFAULT_PORT,
+    target_open_url: str | None = None,
+):
     library = MangaLibrary(library_dir)
     print("=" * 60)
     print("  Local Manga & Manhwa Reader - Core Server (Phase 1)")
@@ -2631,6 +2639,8 @@ def run_server(library_dir: str | None = None, port: int = DEFAULT_PORT):
     print(f"Library Directory : {library.root_path if library.root_path else 'None (unconfigured)'}")
     print(f"Directory Exists  : {'Yes' if library.exists() else 'No (directory will be scanned once created or selected)'}")
     print(f"Server URL        : http://localhost:{port}")
+    if target_open_url:
+        print(f"Startup Series    : {target_open_url}")
     print("=" * 60)
     print("Available API endpoints:")
     print(f"  • Status check   : http://localhost:{port}/api/status")
@@ -2643,9 +2653,19 @@ def run_server(library_dir: str | None = None, port: int = DEFAULT_PORT):
     MangaRequestHandler.library = library
     MangaRequestHandler.static_dir = Path(__file__).parent / "static"
     MangaRequestHandler.remote_service = RemoteReaderService()
+    MangaRequestHandler.startup_url = target_open_url
 
     server = ThreadingHTTPServer(("127.0.0.1", port), MangaRequestHandler)
     server.daemon_threads = True
+
+    if target_open_url and not os.environ.get("LOCAL_MANGA_LAUNCHER"):
+        def _open():
+            try:
+                webbrowser.open(target_open_url)
+            except Exception:
+                pass
+        threading.Thread(target=_open, daemon=True).start()
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -2657,6 +2677,12 @@ def main():
     default_dir = get_default_library_dir()
     parser = argparse.ArgumentParser(
         description="Local web-based manga/manhwa reader server (Phase 1)"
+    )
+    parser.add_argument(
+        "url",
+        nargs="?",
+        default=None,
+        help="Optional remote manga/manhwa URL to open directly in the reader"
     )
     parser.add_argument(
         "--dir", "-d",
@@ -2671,7 +2697,25 @@ def main():
         help=f"Port to bind the HTTP server to (default: {DEFAULT_PORT})"
     )
     args = parser.parse_args()
-    run_server(library_dir=args.dir, port=args.port)
+
+    target_open_url = None
+    if args.url:
+        from urllib.parse import urlsplit
+        try:
+            service = RemoteReaderService()
+            provider, target = service.parse_series_identifier(args.url)
+            canonical_id = service._normalize_series_key(args.url)
+            series_target = canonical_id if canonical_id.startswith("remote:") else target
+            quoted_target = quote(series_target, safe="")
+            target_open_url = f"http://localhost:{args.port}/#/series/{quoted_target}"
+        except (ProviderNotFoundError, SSRFSecurityError, InvalidSchemeError, DisallowedHostError, ValueError) as e:
+            parsed_u = urlsplit(args.url)
+            host_info = parsed_u.netloc or "unknown host"
+            err_type = type(e).__name__
+            sys.stderr.write(f"Error: Invalid or unsupported remote manga URL for '{host_info}' ({err_type}).\n")
+            sys.exit(1)
+
+    run_server(library_dir=args.dir, port=args.port, target_open_url=target_open_url)
 
 
 if __name__ == "__main__":
