@@ -2775,6 +2775,215 @@ body.in-fullscreen .reader-progress-container {
 }
 
 /* =========================================
+   Remote Series Entry & Modal
+   ========================================= */
+.btn-open-remote {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 0.80rem;
+  padding: 3px 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.btn-open-remote .remote-btn-icon {
+  width: 13px;
+  height: 13px;
+  color: var(--text-muted);
+  transition: color 0.15s ease;
+}
+
+.btn-open-remote:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  background-color: var(--surface-elevated);
+}
+
+.btn-open-remote:hover .remote-btn-icon {
+  color: var(--accent);
+}
+
+.btn-open-remote:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.remote-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.remote-recent-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.remote-recent-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.btn-clear-recent {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 2px 4px;
+  transition: color 0.15s ease;
+}
+
+.btn-clear-recent:hover {
+  color: var(--accent-hover);
+}
+
+.remote-recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.remote-recent-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background-color: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  gap: 8px;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.remote-recent-item:hover {
+  border-color: var(--accent);
+}
+
+.remote-recent-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.remote-recent-title {
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.remote-recent-url {
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.remote-recent-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.btn-recent-open {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-recent-open:hover {
+  border-color: var(--accent);
+  color: var(--text);
+  background-color: var(--accent-subtle);
+}
+
+.btn-recent-remove {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-xs);
+  transition: color 0.15s ease;
+}
+
+.btn-recent-remove:hover {
+  color: var(--accent-hover);
+}
+
+.btn-recent-remove svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Reader image retry on load failure */
+.image-load-failed {
+  min-height: 120px;
+  background-color: var(--surface-elevated);
+}
+
+.reader-image-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px auto;
+  padding: 10px 16px;
+  background-color: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.reader-image-retry:hover {
+  border-color: var(--accent);
+  color: var(--text);
+  background-color: var(--accent-subtle);
+}
+
+.reader-image-retry svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* =========================================
    Mobile Safari Responsiveness
    ========================================= */
 @media (max-width: 640px) {

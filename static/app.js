@@ -50,6 +50,21 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnCloseSettings = document.getElementById("btn-close-settings");
   const settingsLibraryPath = document.getElementById("settings-library-path");
 
+  // DOM Elements - Remote Series Modal
+  const btnOpenRemote = document.getElementById("btn-open-remote");
+  const dropdownItemRemote = document.getElementById("dropdown-item-remote");
+  const modalRemote = document.getElementById("modal-remote");
+  const btnCloseRemoteModal = document.getElementById("btn-close-remote-modal");
+  const btnCancelRemote = document.getElementById("btn-cancel-remote");
+  const btnLoadRemote = document.getElementById("btn-load-remote");
+  const btnLoadRemoteText = document.getElementById("btn-load-remote-text");
+  const remoteUrlInput = document.getElementById("remote-url-input");
+  const remoteModalError = document.getElementById("remote-modal-error");
+  const remoteRecentSection = document.getElementById("remote-recent-section");
+  const remoteRecentList = document.getElementById("remote-recent-list");
+  const btnClearRemoteRecent = document.getElementById("btn-clear-remote-recent");
+  const formRemoteSeries = document.getElementById("form-remote-series");
+
   // DOM Elements - Chapters & Metadata
   const chaptersList = document.getElementById("chapters-list");
   const chaptersEmpty = document.getElementById("chapters-empty");
@@ -526,6 +541,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function closeAllModals() {
     if (modalProfile) modalProfile.classList.add("hidden");
     if (modalSettings) modalSettings.classList.add("hidden");
+    if (modalRemote) modalRemote.classList.add("hidden");
     if (modalOverlay) modalOverlay.classList.add("hidden");
     toggleProfileDropdown(false);
   }
@@ -601,6 +617,220 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (modalOverlay) modalOverlay.classList.remove("hidden");
     if (modalSettings) modalSettings.classList.remove("hidden");
+  }
+
+  // Remote Series State & Modal Helpers
+  function isRemoteSeries(seriesStr) {
+    if (!seriesStr || typeof seriesStr !== "string") return false;
+    const s = seriesStr.trim();
+    return s.startsWith("remote:") || s.startsWith("http://") || s.startsWith("https://");
+  }
+
+  const RECENT_REMOTE_STORAGE_KEY = "local_manga_recent_remote";
+
+  function getRecentRemoteSeries() {
+    try {
+      const raw = localStorage.getItem(RECENT_REMOTE_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return [];
+  }
+
+  function saveRecentRemoteSeries(seriesIdentifier, title, url) {
+    if (!seriesIdentifier) return;
+    try {
+      const list = getRecentRemoteSeries().filter((item) => item && item.id !== seriesIdentifier);
+      list.unshift({
+        id: seriesIdentifier,
+        title: (title || seriesIdentifier).trim(),
+        url: (url || "").trim()
+      });
+      // Minimal storage: keep at most 8 items
+      const trimmed = list.slice(0, 8);
+      localStorage.setItem(RECENT_REMOTE_STORAGE_KEY, JSON.stringify(trimmed));
+    } catch {}
+  }
+
+  function removeRecentRemoteSeries(seriesIdentifier) {
+    try {
+      const list = getRecentRemoteSeries().filter((item) => item && item.id !== seriesIdentifier);
+      localStorage.setItem(RECENT_REMOTE_STORAGE_KEY, JSON.stringify(list));
+    } catch {}
+    renderRecentRemoteList();
+  }
+
+  function clearAllRecentRemoteSeries() {
+    try {
+      localStorage.removeItem(RECENT_REMOTE_STORAGE_KEY);
+    } catch {}
+    renderRecentRemoteList();
+  }
+
+  function renderRecentRemoteList() {
+    if (!remoteRecentList || !remoteRecentSection) return;
+    const recent = getRecentRemoteSeries();
+    if (recent.length === 0) {
+      remoteRecentSection.classList.add("hidden");
+      remoteRecentList.innerHTML = "";
+      return;
+    }
+
+    remoteRecentList.innerHTML = "";
+    recent.forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "remote-recent-item";
+
+      const info = document.createElement("div");
+      info.className = "remote-recent-info";
+
+      const titleEl = document.createElement("div");
+      titleEl.className = "remote-recent-title";
+      titleEl.textContent = item.title || item.id;
+
+      const urlEl = document.createElement("div");
+      urlEl.className = "remote-recent-url";
+      urlEl.textContent = item.url || item.id;
+
+      info.appendChild(titleEl);
+      info.appendChild(urlEl);
+
+      const actions = document.createElement("div");
+      actions.className = "remote-recent-actions";
+
+      const openBtn = document.createElement("button");
+      openBtn.type = "button";
+      openBtn.className = "btn-recent-open";
+      openBtn.textContent = "Open";
+      openBtn.addEventListener("click", () => {
+        closeAllModals();
+        window.location.hash = `#/series/${encodeURIComponent(item.id)}`;
+      });
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "btn-recent-remove";
+      removeBtn.title = "Remove from recents";
+      removeBtn.setAttribute("aria-label", `Remove ${item.title || item.id} from recent series`);
+      removeBtn.innerHTML = `
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 6 6 18M6 6l12 12"/>
+        </svg>
+      `;
+      removeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        removeRecentRemoteSeries(item.id);
+      });
+
+      actions.appendChild(openBtn);
+      actions.appendChild(removeBtn);
+
+      row.appendChild(info);
+      row.appendChild(actions);
+      remoteRecentList.appendChild(row);
+    });
+
+    remoteRecentSection.classList.remove("hidden");
+  }
+
+  function setRemoteModalError(message) {
+    if (!remoteModalError) return;
+    remoteModalError.textContent = message || "";
+    remoteModalError.classList.toggle("hidden", !message);
+  }
+
+  function openRemoteModal() {
+    toggleProfileDropdown(false);
+    if (modalProfile) modalProfile.classList.add("hidden");
+    if (modalSettings) modalSettings.classList.add("hidden");
+
+    if (remoteUrlInput) {
+      remoteUrlInput.value = "";
+    }
+    setRemoteModalError("");
+    renderRecentRemoteList();
+
+    if (modalOverlay) modalOverlay.classList.remove("hidden");
+    if (modalRemote) modalRemote.classList.remove("hidden");
+    if (remoteUrlInput) remoteUrlInput.focus();
+  }
+
+  async function resolveAndOpenRemote(inputStr) {
+    const raw = (inputStr || "").trim();
+    if (!raw) {
+      setRemoteModalError("Please enter a WeebCentral series URL or identifier.");
+      return;
+    }
+
+    // Client-side quick checks & normalization
+    let target = raw;
+    if (target.startsWith("weebcentral.com/") || target.startsWith("www.weebcentral.com/")) {
+      target = `https://${target}`;
+    }
+
+    if (target.startsWith("http://")) {
+      setRemoteModalError("Insecure HTTP is not allowed. Only HTTPS WeebCentral URLs are supported.");
+      return;
+    }
+
+    if (target.startsWith("https://")) {
+      try {
+        const parsed = new URL(target);
+        const host = parsed.hostname.toLowerCase();
+        if (host !== "weebcentral.com" && !host.endsWith(".weebcentral.com")) {
+          setRemoteModalError(`Unsupported provider '${host}'. Only WeebCentral URLs are currently supported.`);
+          return;
+        }
+        if (!parsed.pathname.startsWith("/series/")) {
+          setRemoteModalError("URL must point to a series page (e.g. https://weebcentral.com/series/<id>).");
+          return;
+        }
+      } catch {
+        setRemoteModalError("Malformed URL format.");
+        return;
+      }
+    } else if (!target.startsWith("remote:weebcentral:")) {
+      // If it looks like a clean identifier, prefix with remote:weebcentral:
+      if (/^[a-zA-Z0-9_-]+$/.test(target)) {
+        target = `remote:weebcentral:${target}`;
+      } else {
+        setRemoteModalError("Please enter a valid WeebCentral series URL (e.g. https://weebcentral.com/series/...).");
+        return;
+      }
+    }
+
+    setRemoteModalError("");
+    if (btnLoadRemote) btnLoadRemote.disabled = true;
+    if (btnLoadRemoteText) btnLoadRemoteText.textContent = "Loading...";
+
+    try {
+      const res = await fetch(`/api/remote/resolve?url=${encodeURIComponent(target)}`);
+      if (!res.ok) {
+        let errMsg = `Failed to resolve series (${res.status})`;
+        try {
+          const errData = await res.json();
+          if (errData && errData.error) errMsg = errData.error;
+        } catch {}
+        setRemoteModalError(errMsg);
+        return;
+      }
+
+      const data = await res.json();
+      const canonicalId = data.series_identifier || target;
+      const title = (data.series && data.series.title) ? data.series.title : canonicalId;
+      const url = (data.series && data.series.url) ? data.series.url : target;
+
+      saveRecentRemoteSeries(canonicalId, title, url);
+      closeAllModals();
+      window.location.hash = `#/series/${encodeURIComponent(canonicalId)}`;
+    } catch (err) {
+      setRemoteModalError(`Network error resolving remote series: ${err.message}`);
+    } finally {
+      if (btnLoadRemote) btnLoadRemote.disabled = false;
+      if (btnLoadRemoteText) btnLoadRemoteText.textContent = "Open Series";
+    }
   }
 
   async function saveProfile() {
@@ -798,12 +1028,20 @@ document.addEventListener("DOMContentLoaded", () => {
         editorError.textContent = "";
         editorError.classList.add("hidden");
       }
+      if (btnEditMetadata) {
+        btnEditMetadata.classList.remove("hidden");
+      }
       if (appHeader) {
         appHeader.style.removeProperty("background-color");
         appHeader.style.removeProperty("border-bottom-color");
       }
     } else {
       startSeriesScrollTransition();
+    }
+
+    if (viewName === "library") {
+      currentSeries = null;
+      currentChapter = null;
     }
     window.scrollTo({ top: 0, behavior: "instant" });
   }
@@ -1377,11 +1615,35 @@ document.addEventListener("DOMContentLoaded", () => {
         libraryNoResults.classList.remove("hidden");
         const querySpan = document.getElementById("no-results-query");
         if (querySpan) querySpan.textContent = librarySearchQuery;
+
+        // If query looks like a WeebCentral URL or identifier, offer direct action
+        const existingPrompt = libraryNoResults.querySelector(".search-remote-prompt");
+        if (existingPrompt) existingPrompt.remove();
+
+        const isWeebCentralQuery = query.includes("weebcentral.com") || query.startsWith("remote:weebcentral:");
+        if (isWeebCentralQuery) {
+          const promptDiv = document.createElement("div");
+          promptDiv.className = "search-remote-prompt";
+          promptDiv.style.marginTop = "14px";
+          const openRemoteBtn = document.createElement("button");
+          openRemoteBtn.type = "button";
+          openRemoteBtn.className = "btn btn-secondary btn-sm";
+          openRemoteBtn.textContent = "Open Remote Series";
+          openRemoteBtn.addEventListener("click", () => {
+            resolveAndOpenRemote(librarySearchQuery);
+          });
+          promptDiv.appendChild(openRemoteBtn);
+          libraryNoResults.appendChild(promptDiv);
+        }
       }
       return;
     }
 
-    if (libraryNoResults) libraryNoResults.classList.add("hidden");
+    if (libraryNoResults) {
+      libraryNoResults.classList.add("hidden");
+      const existingPrompt = libraryNoResults.querySelector(".search-remote-prompt");
+      if (existingPrompt) existingPrompt.remove();
+    }
 
     // Render series cards
     filtered.forEach((s) => {
@@ -1805,15 +2067,22 @@ document.addEventListener("DOMContentLoaded", () => {
   // 2. Load Chapters View (shows Bookmarks and Reading Progress)
   async function loadChapters(seriesName) {
     currentSeries = seriesName;
+    const isRemote = isRemoteSeries(seriesName);
     switchView("chapters");
-    seriesTitle.textContent = seriesName;
-    seriesMeta.textContent = "Loading chapters...";
+
+    // Hide metadata editing for remote series (read-only from provider)
+    if (btnEditMetadata) {
+      btnEditMetadata.classList.toggle("hidden", isRemote);
+    }
+
+    seriesTitle.textContent = isRemote ? "Loading remote series..." : seriesName;
+    seriesMeta.textContent = isRemote ? "Loading remote chapters..." : "Loading chapters...";
     chaptersList.innerHTML = "";
     chaptersEmpty.classList.add("hidden");
 
     if (headerSeriesTitle) {
-      headerSeriesTitle.textContent = seriesName;
-      headerSeriesTitle.title = `Scroll ${seriesName} to top`;
+      headerSeriesTitle.textContent = isRemote ? "Remote Series" : seriesName;
+      headerSeriesTitle.title = `Scroll to top`;
     }
 
     if (seriesHeroBackdrop) {
@@ -1847,7 +2116,14 @@ document.addEventListener("DOMContentLoaded", () => {
         fetchReaderData(seriesName)
       ]);
 
-      if (!chaptersRes.ok) throw new Error(`HTTP error ${chaptersRes.status}`);
+      if (!chaptersRes.ok) {
+        let errMsg = `HTTP error ${chaptersRes.status}`;
+        try {
+          const errData = await chaptersRes.json();
+          if (errData && errData.error) errMsg = errData.error;
+        } catch {}
+        throw new Error(errMsg);
+      }
       const data = await chaptersRes.json();
 
       if (data && data.title) {
@@ -1858,13 +2134,29 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
 
-      currentSeries = seriesName;
+      currentSeries = (isRemote && data && data.series) ? data.series : seriesName;
+      if (isRemote) {
+        const canonicalId = (data && data.series) ? data.series : seriesName;
+        const sTitle = (data && data.title) ? data.title : canonicalId;
+        saveRecentRemoteSeries(canonicalId, sTitle, data ? data.url : "");
+      }
+
       currentSeriesBookmarks = new Set(readerData.bookmarks || []);
       currentSeriesProgress = readerData.progress || {};
 
       renderSeriesMetadata(readerData);
 
-      const chapters = data.chapters || [];
+      const rawChapters = data.chapters || [];
+      const seenIds = new Set();
+      const chapters = [];
+      for (const ch of rawChapters) {
+        const id = ch.name || ch.id;
+        if (id && !seenIds.has(id)) {
+          seenIds.add(id);
+          chapters.push(ch);
+        }
+      }
+
       chaptersList.innerHTML = "";
 
       if (chapters.length === 0) {
@@ -1942,11 +2234,21 @@ document.addEventListener("DOMContentLoaded", () => {
     chaptersList.innerHTML = "";
     if (!currentSeriesChapters || currentSeriesChapters.length === 0) return;
 
-    const naturalCompare = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
-    const sortedChapters = [...currentSeriesChapters].sort((a, b) => {
-      const cmp = naturalCompare(a.name, b.name);
-      return seriesChapterOrder === "desc" ? -cmp : cmp;
-    });
+    let sortedChapters;
+    const isRemote = isRemoteSeries(currentSeries);
+    if (isRemote) {
+      // Provider returns chapters in natural reading order (ascending).
+      // Preserve provider's sequence, and reverse it when user requests descending.
+      sortedChapters = seriesChapterOrder === "desc"
+        ? [...currentSeriesChapters].reverse()
+        : [...currentSeriesChapters];
+    } else {
+      const naturalCompare = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+      sortedChapters = [...currentSeriesChapters].sort((a, b) => {
+        const cmp = naturalCompare(a.name, b.name);
+        return seriesChapterOrder === "desc" ? -cmp : cmp;
+      });
+    }
 
     sortedChapters.forEach((ch) => {
       const item = document.createElement("div");
@@ -1957,6 +2259,9 @@ document.addEventListener("DOMContentLoaded", () => {
       const isBookmarked = currentSeriesBookmarks.has(ch.name);
       const hasProgress = currentSeriesProgressMap.has(ch.name);
       const progressPct = hasProgress ? currentSeriesProgressMap.get(ch.name) : null;
+      const pagesText = ch.image_count > 0
+        ? `${ch.image_count} ${ch.image_count === 1 ? "page" : "pages"}`
+        : (ch.date ? escapeHtml(ch.date) : "");
 
       item.innerHTML = `
         <div class="chapter-info">
@@ -1969,7 +2274,7 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
         <div class="chapter-actions">
           <span class="chapter-progress">${progressPct != null ? `${progressPct}%` : ""}</span>
-          <span class="chapter-pages">${ch.image_count} ${ch.image_count === 1 ? "page" : "pages"}</span>
+          <span class="chapter-pages">${pagesText}</span>
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" class="chapter-arrow">
             <path d="M9 18l6-6-6-6"/>
           </svg>
@@ -2036,7 +2341,14 @@ document.addEventListener("DOMContentLoaded", () => {
         fetch(`/api/chapters?series=${encodeURIComponent(seriesName)}`).then((r) => (r.ok ? r.json() : { chapters: [] })).catch(() => ({ chapters: [] }))
       ]);
 
-      if (!imagesRes.ok) throw new Error(`HTTP error ${imagesRes.status}`);
+      if (!imagesRes.ok) {
+        let errMsg = `HTTP error ${imagesRes.status}`;
+        try {
+          const errData = await imagesRes.json();
+          if (errData && errData.error) errMsg = errData.error;
+        } catch {}
+        throw new Error(errMsg);
+      }
       const data = await imagesRes.json();
 
       if (chaptersData && chaptersData.title) {
@@ -2104,6 +2416,36 @@ document.addEventListener("DOMContentLoaded", () => {
         imgEl.dataset.filename = img.filename;
         imgEl.loading = "lazy";
         imgEl.decoding = "async";
+
+        imgEl.onerror = () => {
+          imgEl.classList.add("image-load-failed");
+          let retryBtn = pageDiv.querySelector(".reader-image-retry");
+          if (!retryBtn) {
+            retryBtn = document.createElement("button");
+            retryBtn.type = "button";
+            retryBtn.className = "reader-image-retry";
+            retryBtn.innerHTML = `
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M23 4v6h-6M1 20v-6h6"/>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+              </svg>
+              <span>Failed to load page. Click to retry</span>
+            `;
+            retryBtn.addEventListener("click", () => {
+              retryBtn.remove();
+              imgEl.classList.remove("image-load-failed");
+              const sep = img.url.includes("?") ? "&" : "?";
+              imgEl.src = `${img.url}${sep}_retry=${Date.now()}`;
+            });
+            pageDiv.appendChild(retryBtn);
+          }
+        };
+
+        imgEl.onload = () => {
+          imgEl.classList.remove("image-load-failed");
+          const retryBtn = pageDiv.querySelector(".reader-image-retry");
+          if (retryBtn) retryBtn.remove();
+        };
 
         pageDiv.appendChild(imgEl);
         readerContainer.appendChild(pageDiv);
@@ -2203,7 +2545,7 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (err) {
       readerLoading.classList.add("hidden");
       if (readerProgressContainer) readerProgressContainer.classList.add("hidden");
-      if (readerEmpty) readerEmpty.classList.add("hidden");
+      if (readerEmpty) readerEmpty.classList.remove("hidden");
       showError(`Failed to load chapter images: ${err.message}`);
     }
   }
@@ -2526,6 +2868,20 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  if (btnOpenRemote) {
+    btnOpenRemote.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openRemoteModal();
+    });
+  }
+
+  if (dropdownItemRemote) {
+    dropdownItemRemote.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openRemoteModal();
+    });
+  }
+
   // Modal Backdrop & Close Events
   if (modalOverlay) {
     modalOverlay.addEventListener("click", () => {
@@ -2548,6 +2904,35 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   if (btnCloseSettings) {
     btnCloseSettings.addEventListener("click", closeAllModals);
+  }
+
+  if (btnCloseRemoteModal) {
+    btnCloseRemoteModal.addEventListener("click", closeAllModals);
+  }
+  if (btnCancelRemote) {
+    btnCancelRemote.addEventListener("click", closeAllModals);
+  }
+  if (btnLoadRemote) {
+    btnLoadRemote.addEventListener("click", () => {
+      if (remoteUrlInput) resolveAndOpenRemote(remoteUrlInput.value);
+    });
+  }
+  if (formRemoteSeries) {
+    formRemoteSeries.addEventListener("submit", (e) => {
+      e.preventDefault();
+      if (remoteUrlInput) resolveAndOpenRemote(remoteUrlInput.value);
+    });
+  }
+  if (remoteUrlInput) {
+    remoteUrlInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        resolveAndOpenRemote(remoteUrlInput.value);
+      }
+    });
+  }
+  if (btnClearRemoteRecent) {
+    btnClearRemoteRecent.addEventListener("click", clearAllRecentRemoteSeries);
   }
 
   // Profile Avatar Upload & Removal

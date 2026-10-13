@@ -69,6 +69,14 @@
             </svg>
             <span>Settings</span>
           </button>
+          <button type="button" class="profile-dropdown-item" id="dropdown-item-remote" role="menuitem">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+            <span>Open Remote Manga</span>
+          </button>
         </div>
       </div>
     </div>
@@ -111,6 +119,14 @@
                 <span class="sort-dir-arrow" id="library-sort-arrow" aria-hidden="true">↑</span>
               </button>
             </div>
+            <button type="button" id="btn-open-remote" class="btn-open-remote" title="Open remote manga (WeebCentral)" aria-label="Open remote series">
+              <svg class="remote-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="2" y1="12" x2="22" y2="12"/>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+              </svg>
+              <span>Remote</span>
+            </button>
           </div>
         </div>
       </div>
@@ -527,6 +543,48 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary btn-sm" id="btn-close-settings">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Remote Series Modal -->
+  <div class="app-modal hidden" id="modal-remote" role="dialog" aria-modal="true" aria-labelledby="modal-remote-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title" id="modal-remote-title">Open Remote Manga</h2>
+        <button type="button" class="modal-close-btn" id="btn-close-remote-modal" aria-label="Close dialog">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6 6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <form id="form-remote-series" onsubmit="return false;">
+          <div class="modal-field">
+            <label for="remote-url-input" class="editor-label">WeebCentral Series URL or Identifier</label>
+            <div class="remote-input-wrapper">
+              <input type="text" id="remote-url-input" class="editor-input" placeholder="https://weebcentral.com/series/01J76XY8CM99/..." autocomplete="off" spellcheck="false" />
+            </div>
+            <span class="editor-file-hint">Paste a WeebCentral URL (e.g. <code>https://weebcentral.com/series/&lt;id&gt;</code>) or identifier</span>
+          </div>
+
+          <div id="remote-modal-error" class="editor-error hidden" role="alert"></div>
+
+          <!-- Minimal Recent Remote Series List -->
+          <div id="remote-recent-section" class="remote-recent-section hidden">
+            <div class="remote-recent-header">
+              <span class="editor-label">Recent Remote Series</span>
+              <button type="button" id="btn-clear-remote-recent" class="btn-clear-recent" title="Clear all recent remote series">Clear All</button>
+            </div>
+            <div id="remote-recent-list" class="remote-recent-list" role="list"></div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-cancel-remote">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-load-remote">
+          <span id="btn-load-remote-text">Open Series</span>
+        </button>
       </div>
     </div>
   </div>
