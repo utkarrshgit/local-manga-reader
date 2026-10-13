@@ -19,6 +19,12 @@ venv.bak/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
+
+# Build and distribution
+build/
+dist/
+*.egg-info/
 
 # macOS and OS system files
 .DS_Store
@@ -35,6 +41,8 @@ ehthumbs.db
 *.swp
 *.swo
 *~
+*.bak
+*.tmp
 
 # Manga library and reader metadata (library must remain outside repo)
 [Mm]anga/
