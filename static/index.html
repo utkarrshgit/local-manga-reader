@@ -119,7 +119,7 @@
                 <span class="sort-dir-arrow" id="library-sort-arrow" aria-hidden="true">↑</span>
               </button>
             </div>
-            <button type="button" id="btn-open-remote" class="btn-open-remote" title="Open remote manga (WeebCentral)" aria-label="Open remote series">
+            <button type="button" id="btn-open-remote" class="btn-open-remote" title="Open remote manga (WeebCentral, nhentai)" aria-label="Open remote series">
               <svg class="remote-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <circle cx="12" cy="12" r="10"/>
                 <line x1="2" y1="12" x2="22" y2="12"/>
@@ -561,11 +561,34 @@
       <div class="modal-body">
         <form id="form-remote-series" onsubmit="return false;">
           <div class="modal-field">
-            <label for="remote-url-input" class="editor-label">WeebCentral Series URL or Identifier</label>
+            <label for="remote-url-input" class="editor-label">Remote Series or Gallery URL</label>
             <div class="remote-input-wrapper">
-              <input type="text" id="remote-url-input" class="editor-input" placeholder="https://weebcentral.com/series/01J76XY8CM99/..." autocomplete="off" spellcheck="false" />
+              <input type="text" id="remote-url-input" class="editor-input" placeholder="Paste URL here…" autocomplete="off" spellcheck="false" />
             </div>
-            <span class="editor-file-hint">Paste a WeebCentral URL (e.g. <code>https://weebcentral.com/series/&lt;id&gt;</code>) or identifier</span>
+          </div>
+
+          <!-- Collapsible Supported URL Formats Disclosure -->
+          <div class="remote-formats-disclosure" id="remote-formats-disclosure">
+            <button
+              type="button"
+              class="remote-formats-toggle"
+              id="remote-formats-toggle"
+              aria-expanded="false"
+              aria-controls="remote-formats-content"
+            >
+              <span class="remote-formats-toggle-text">Supported URL formats</span>
+              <svg class="remote-formats-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </button>
+            <div
+              class="remote-formats-content hidden"
+              id="remote-formats-content"
+              role="region"
+              aria-labelledby="remote-formats-toggle"
+            >
+              <div class="remote-formats-list" id="remote-formats-list" role="list"></div>
+            </div>
           </div>
 
           <div id="remote-modal-error" class="editor-error hidden" role="alert"></div>

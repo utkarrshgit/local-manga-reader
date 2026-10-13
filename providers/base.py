@@ -151,6 +151,9 @@ class BaseProvider(ABC):
     id: str = ""
     name: str = ""
     allowed_domains: Tuple[str, ...] = ()
+    supported_url_types: str = "Series URL"
+    url_pattern: str = ""
+    is_public: bool = True
 
     @abstractmethod
     def can_handle_url(self, url: str) -> bool:

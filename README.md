@@ -9,6 +9,7 @@ A lightweight, zero-dependency local manga and manhwa reader that runs in your w
 - **Continuous Vertical Reading**: Smooth scrolling optimized for both traditional manga and webtoons/manhwa.
 - **Spaced & Seamless Modes**: Switch between discrete pages with margins or a seamless edge-to-edge strip.
 - **Folder & Archive Support**: Reads chapter folders directly alongside `.cbz` and `.zip` archives without extracting them.
+- **Remote Reading**: Supports streaming manga and manhwa from supported online sources, allowing you to read remote content directly in the app without downloading it manually first.
 - **Reading Progress & Resume**: Automatically saves your position as you scroll and resumes where you left off.
 - **Segmented Timeline**: Interactive bottom progress bar with page previews and instant jump navigation.
 - **Library Organization**: Instant search, unified sorting (by Name, Chapters, or Unread count), and chapter order toggle.

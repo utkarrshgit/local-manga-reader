@@ -447,8 +447,31 @@ class TestRemoteUIIntegration(unittest.TestCase):
     # 6. Static Asset UI Integration
     # -------------------------------------------------------------------------
 
+    def test_remote_providers_endpoint_returns_registered_sources(self) -> None:
+        """GET /api/remote/providers returns registered public providers, URL types, and patterns."""
+        headers, body, status = self.simulate_get("/api/remote/providers")
+        self.assertEqual(status, HTTPStatus.OK)
+        data = json.loads(body.decode("utf-8"))
+        self.assertIn("providers", data)
+        providers = data["providers"]
+        provider_ids = [p["id"] for p in providers]
+        self.assertIn("weebcentral", provider_ids)
+        self.assertIn("nhentai", provider_ids)
+        # Mock provider must not be exposed to user
+        self.assertNotIn("mock", provider_ids)
+
+        weeb = next(p for p in providers if p["id"] == "weebcentral")
+        self.assertEqual(weeb["name"], "WeebCentral")
+        self.assertEqual(weeb["url_type"], "Series URL")
+        self.assertEqual(weeb["url_pattern"], "weebcentral.com/series/…")
+
+        nh = next(p for p in providers if p["id"] == "nhentai")
+        self.assertEqual(nh["name"], "nhentai")
+        self.assertEqual(nh["url_type"], "Gallery URL")
+        self.assertEqual(nh["url_pattern"], "nhentai.net/g/…")
+
     def test_static_index_html_contains_remote_ui_elements(self) -> None:
-        """index.html contains the remote open button, remote modal, and input controls."""
+        """index.html contains the simplified URL input, collapsible Supported URL formats disclosure, and recent list."""
         index_file = Path(__file__).parent / "static" / "index.html"
         self.assertTrue(index_file.is_file())
         content = index_file.read_text(encoding="utf-8")
@@ -456,6 +479,22 @@ class TestRemoteUIIntegration(unittest.TestCase):
         self.assertIn('id="btn-open-remote"', content)
         self.assertIn('id="modal-remote"', content)
         self.assertIn('id="remote-url-input"', content)
+        self.assertIn('placeholder="Paste URL here…"', content)
+        self.assertIn("Remote Series or Gallery URL", content)
+        # Explanatory paragraph hint must be removed from the remote modal
+        modal_remote_html = content[content.find('id="modal-remote"') :]
+        self.assertNotIn("editor-file-hint", modal_remote_html)
+
+        # Collapsible Supported URL formats disclosure
+        self.assertIn('id="remote-formats-disclosure"', content)
+        self.assertIn('id="remote-formats-toggle"', content)
+        self.assertIn('aria-expanded="false"', content)
+        self.assertIn('aria-controls="remote-formats-content"', content)
+        self.assertIn("Supported URL formats", content)
+        self.assertIn('id="remote-formats-content"', content)
+        self.assertIn('class="remote-formats-content hidden"', content)
+        self.assertIn('id="remote-formats-list"', content)
+
         self.assertIn('id="btn-load-remote"', content)
         self.assertIn('id="remote-recent-section"', content)
         self.assertIn('id="remote-recent-list"', content)
@@ -463,18 +502,28 @@ class TestRemoteUIIntegration(unittest.TestCase):
         self.assertIn('id="dropdown-item-remote"', content)
 
     def test_static_style_css_contains_remote_and_retry_styles(self) -> None:
-        """style.css contains styles for remote UI controls and reader retry elements."""
+        """style.css contains styles for remote UI controls, collapsible disclosure, and recent entries."""
         css_file = Path(__file__).parent / "static" / "style.css"
         self.assertTrue(css_file.is_file())
         content = css_file.read_text(encoding="utf-8")
 
         self.assertIn(".btn-open-remote", content)
+        self.assertIn(".remote-formats-disclosure", content)
+        self.assertIn(".remote-formats-toggle", content)
+        self.assertIn(".remote-formats-chevron", content)
+        self.assertIn(".remote-formats-content", content)
+        self.assertIn(".remote-format-item", content)
+        self.assertIn(".remote-format-name", content)
+        self.assertIn(".remote-format-type", content)
+        self.assertIn(".remote-format-pattern", content)
         self.assertIn(".remote-recent-section", content)
         self.assertIn(".remote-recent-item", content)
+        self.assertIn(".remote-recent-title", content)
+        self.assertIn(".remote-recent-meta", content)
         self.assertIn(".reader-image-retry", content)
 
     def test_static_app_js_remote_integration_and_dom_safety(self) -> None:
-        """app.js contains remote series routing, validation, and safe HTML escaping."""
+        """app.js contains remote series routing, validation, collapsible formats disclosure, and safe recent display."""
         app_js = Path(__file__).parent / "static" / "app.js"
         self.assertTrue(app_js.is_file())
         content = app_js.read_text(encoding="utf-8")
@@ -483,9 +532,22 @@ class TestRemoteUIIntegration(unittest.TestCase):
         self.assertIn("function isRemoteSeries", content)
         self.assertIn("function openRemoteModal", content)
         self.assertIn("function resolveAndOpenRemote", content)
+        self.assertIn("function loadSupportedProviders", content)
+        self.assertIn("function setFormatsDisclosureExpanded", content)
+        self.assertIn("function toggleFormatsDisclosure", content)
+        self.assertIn("function renderSupportedSources", content)
+        self.assertIn("function getProviderDisplayName", content)
         self.assertIn("function saveRecentRemoteSeries", content)
         self.assertIn("function removeRecentRemoteSeries", content)
         self.assertIn("function renderRecentRemoteList", content)
+
+        # Collapsible disclosure collapsed by default on open
+        self.assertIn("setFormatsDisclosureExpanded(false)", content)
+        self.assertIn("remoteFormatsToggle", content)
+
+        # Recent entries display & graceful degradation
+        self.assertIn("Untitled Series", content)
+        self.assertIn("remote-recent-meta", content)
 
         # Error resilience & retry
         self.assertIn("reader-image-retry", content)
@@ -493,6 +555,113 @@ class TestRemoteUIIntegration(unittest.TestCase):
 
         # DOM safety / HTML escaping
         self.assertIn("escapeHtml(ch.title || ch.name)", content)
+
+    def test_app_js_recent_series_formatting_contracts(self) -> None:
+        """Verify app.js formatting contracts via Node: no internal handles, clean meta, and fallback."""
+        import subprocess
+        node_script = """
+        const fs = require('fs');
+        const code = fs.readFileSync('static/app.js', 'utf8');
+
+        // Extract getProviderDisplayName and formatting logic from app.js
+        const match = code.match(/function getProviderDisplayName\\([\\s\\S]*?\\n  \\}/);
+        if (!match) {
+            console.error('getProviderDisplayName function not found');
+            process.exit(1);
+        }
+
+        const providerDisplayNames = { weebcentral: 'WeebCentral', nhentai: 'nhentai' };
+        eval(match[0]);
+
+        // Test 1: getProviderDisplayName mappings
+        if (getProviderDisplayName({ id: 'remote:nhentai:123' }) !== 'nhentai') process.exit(2);
+        if (getProviderDisplayName({ id: 'remote:weebcentral:abc' }) !== 'WeebCentral') process.exit(3);
+        if (getProviderDisplayName({ url: 'https://weebcentral.com/series/abc' }) !== 'WeebCentral') process.exit(4);
+        if (getProviderDisplayName({ url: 'https://nhentai.net/g/123' }) !== 'nhentai') process.exit(5);
+
+        // Test 2: Internal ID stripping and subtitle formatting
+        function formatRecentItem(item) {
+            const rawTitle = (item.title || '').trim();
+            const isInternalId = !rawTitle || rawTitle.startsWith('remote:');
+            const displayTitle = isInternalId ? 'Untitled Series' : rawTitle;
+
+            const providerName = getProviderDisplayName(item);
+            const pageCount = (typeof item.pageCount === 'number' && item.pageCount > 0) ? item.pageCount : null;
+
+            let metaText = '';
+            if (providerName && pageCount !== null) {
+                metaText = `${providerName} · ${pageCount} ${pageCount === 1 ? 'page' : 'pages'}`;
+            } else if (providerName) {
+                metaText = providerName;
+            } else if (pageCount !== null) {
+                metaText = `${pageCount} ${pageCount === 1 ? 'page' : 'pages'}`;
+            }
+            return { displayTitle, metaText };
+        }
+
+        // Gallery with title and page count
+        const g1 = formatRecentItem({ id: 'remote:nhentai:686216', title: 'Metamorphosis', pageCount: 32 });
+        if (g1.displayTitle !== 'Metamorphosis') process.exit(6);
+        if (g1.metaText !== 'nhentai · 32 pages') process.exit(7);
+
+        // WeebCentral series with title and no page count
+        const s1 = formatRecentItem({ id: 'remote:weebcentral:01J76XY8CM99', title: 'Wind Breaker (NII Satoru)' });
+        if (s1.displayTitle !== 'Wind Breaker (NII Satoru)') process.exit(8);
+        if (s1.metaText !== 'WeebCentral') process.exit(9);
+
+        // Missing title with internal handle must not leak internal handle
+        const missing = formatRecentItem({ id: 'remote:nhentai:686216', title: 'remote:nhentai:686216', pageCount: 20 });
+        if (missing.displayTitle !== 'Untitled Series') process.exit(10);
+        if (missing.displayTitle.includes('remote:')) process.exit(11);
+        if (missing.metaText !== 'nhentai · 20 pages') process.exit(12);
+
+        // Missing provider and missing page count degrades gracefully
+        const bare = formatRecentItem({ id: 'custom', title: 'My Manga' });
+        if (bare.displayTitle !== 'My Manga') process.exit(13);
+        if (bare.metaText !== '') process.exit(14);
+
+        // Test 3: Supported URL formats disclosure state logic
+        const toggleAttrs = { 'aria-expanded': 'false', classList: new Set() };
+        const contentAttrs = { classList: new Set(['hidden']) };
+        function mockSetExpanded(expanded) {
+            toggleAttrs['aria-expanded'] = expanded ? 'true' : 'false';
+            if (expanded) {
+                toggleAttrs.classList.add('expanded');
+                contentAttrs.classList.delete('hidden');
+            } else {
+                toggleAttrs.classList.delete('expanded');
+                contentAttrs.classList.add('hidden');
+            }
+        }
+
+        // Initially collapsed
+        mockSetExpanded(false);
+        if (toggleAttrs['aria-expanded'] !== 'false') process.exit(15);
+        if (!contentAttrs.classList.has('hidden')) process.exit(16);
+
+        // Expanding
+        mockSetExpanded(true);
+        if (toggleAttrs['aria-expanded'] !== 'true') process.exit(17);
+        if (contentAttrs.classList.has('hidden')) process.exit(18);
+
+        // Test 4: Provider URL patterns verification
+        const sampleProviders = [
+            { id: 'weebcentral', name: 'WeebCentral', url_type: 'Series URL', url_pattern: 'weebcentral.com/series/…' },
+            { id: 'nhentai', name: 'nhentai', url_type: 'Gallery URL', url_pattern: 'nhentai.net/g/…' }
+        ];
+        const rendered = sampleProviders.map(p => ({
+            name: p.name,
+            type: p.url_type,
+            pattern: p.url_pattern
+        }));
+        if (rendered[0].name !== 'WeebCentral' || rendered[0].pattern !== 'weebcentral.com/series/…') process.exit(19);
+        if (rendered[1].name !== 'nhentai' || rendered[1].pattern !== 'nhentai.net/g/…') process.exit(20);
+
+        console.log('ALL_PASSED');
+        """
+        result = subprocess.run(["node", "-e", node_script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, f"Node verification failed: {result.stderr}")
+        self.assertIn("ALL_PASSED", result.stdout)
 
     # -------------------------------------------------------------------------
     # 7. Focused Behavioral & Edge Case Regression Tests

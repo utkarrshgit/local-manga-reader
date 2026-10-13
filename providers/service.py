@@ -133,6 +133,13 @@ class RemoteReaderService:
             except Exception:
                 pass
 
+        if "nhentai" not in self.registry:
+            try:
+                from providers.nhentai import NhentaiProvider
+                self.registry.register(NhentaiProvider())
+            except Exception:
+                pass
+
         self._load_state()
 
     def _load_state(self) -> None:
@@ -213,6 +220,23 @@ class RemoteReaderService:
             "series_identifier": canonical_id,
             "series": series.to_dict(),
         }
+
+    def get_supported_sources(self) -> List[Dict[str, str]]:
+        """
+        Return registered public providers and their supported URL types and patterns.
+        Acts as the single source of truth for the Remote Manga UI.
+        """
+        sources: List[Dict[str, str]] = []
+        for provider in self.registry.list_providers():
+            if not getattr(provider, "is_public", True) or provider.id == "mock":
+                continue
+            sources.append({
+                "id": provider.id,
+                "name": getattr(provider, "name", provider.id),
+                "url_type": getattr(provider, "supported_url_types", "Series URL"),
+                "url_pattern": getattr(provider, "url_pattern", ""),
+            })
+        return sources
 
     def get_chapters(self, series_identifier: str) -> Dict[str, Any]:
         """

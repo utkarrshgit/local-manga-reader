@@ -21,6 +21,7 @@ class MockProvider(BaseProvider):
     id = "mock"
     name = "Mock Manga Provider"
     allowed_domains = ("mock.local", "cdn.mock.local")
+    is_public = False
 
     def __init__(
         self,

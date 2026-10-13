@@ -164,6 +164,9 @@ class WeebCentralProvider(BaseProvider):
 
     id = "weebcentral"
     name = "WeebCentral"
+    supported_url_types = "Series URL"
+    url_pattern = "weebcentral.com/series/…"
+    is_public = True
     allowed_domains = (
         "weebcentral.com",
         "*.weebcentral.com",

@@ -60,6 +60,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnLoadRemoteText = document.getElementById("btn-load-remote-text");
   const remoteUrlInput = document.getElementById("remote-url-input");
   const remoteModalError = document.getElementById("remote-modal-error");
+  const remoteFormatsDisclosure = document.getElementById("remote-formats-disclosure");
+  const remoteFormatsToggle = document.getElementById("remote-formats-toggle");
+  const remoteFormatsContent = document.getElementById("remote-formats-content");
+  const remoteFormatsList = document.getElementById("remote-formats-list") || document.getElementById("remote-sources-list");
+  const remoteSourcesSection = document.getElementById("remote-sources-section") || remoteFormatsDisclosure;
+  const remoteSourcesList = remoteFormatsList;
   const remoteRecentSection = document.getElementById("remote-recent-section");
   const remoteRecentList = document.getElementById("remote-recent-list");
   const btnClearRemoteRecent = document.getElementById("btn-clear-remote-recent");
@@ -626,6 +632,112 @@ document.addEventListener("DOMContentLoaded", () => {
     return s.startsWith("remote:") || s.startsWith("http://") || s.startsWith("https://");
   }
 
+  // Remote Supported Providers & Single Source of Truth
+  let supportedProviders = [];
+  const providerDisplayNames = {
+    weebcentral: "WeebCentral",
+    nhentai: "nhentai"
+  };
+
+  function setFormatsDisclosureExpanded(expanded) {
+    if (!remoteFormatsToggle || !remoteFormatsContent) return;
+    remoteFormatsToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    remoteFormatsToggle.classList.toggle("expanded", expanded);
+    remoteFormatsContent.classList.toggle("hidden", !expanded);
+  }
+
+  function toggleFormatsDisclosure() {
+    if (!remoteFormatsToggle) return;
+    const isExpanded = remoteFormatsToggle.getAttribute("aria-expanded") === "true";
+    setFormatsDisclosureExpanded(!isExpanded);
+  }
+
+  async function loadSupportedProviders() {
+    try {
+      const res = await fetch("/api/remote/providers");
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.providers)) {
+          supportedProviders = data.providers;
+          data.providers.forEach((p) => {
+            if (p && p.id && p.name) {
+              providerDisplayNames[p.id.toLowerCase().trim()] = p.name;
+            }
+          });
+          renderSupportedSources();
+          renderRecentRemoteList();
+        }
+      }
+    } catch {
+      renderSupportedSources();
+    }
+  }
+
+  function renderSupportedSources() {
+    const targetList = remoteFormatsList || document.getElementById("remote-formats-list") || document.getElementById("remote-sources-list");
+    if (!targetList) return;
+    const sources = (supportedProviders && supportedProviders.length > 0)
+      ? supportedProviders
+      : [
+          { id: "weebcentral", name: "WeebCentral", url_type: "Series URL", url_pattern: "weebcentral.com/series/…" },
+          { id: "nhentai", name: "nhentai", url_type: "Gallery URL", url_pattern: "nhentai.net/g/…" }
+        ];
+
+    targetList.innerHTML = "";
+    sources.forEach((source) => {
+      const item = document.createElement("div");
+      item.className = "remote-format-item";
+      item.setAttribute("role", "listitem");
+
+      const header = document.createElement("div");
+      header.className = "remote-format-header";
+
+      const nameEl = document.createElement("span");
+      nameEl.className = "remote-format-name";
+      nameEl.textContent = source.name || source.id;
+
+      const typeEl = document.createElement("span");
+      typeEl.className = "remote-format-type";
+      typeEl.textContent = source.url_type || "Series URL";
+
+      header.appendChild(nameEl);
+      header.appendChild(typeEl);
+      item.appendChild(header);
+
+      if (source.url_pattern) {
+        const patternEl = document.createElement("code");
+        patternEl.className = "remote-format-pattern";
+        patternEl.textContent = source.url_pattern;
+        item.appendChild(patternEl);
+      }
+
+      targetList.appendChild(item);
+    });
+  }
+
+  function getProviderDisplayName(item) {
+    if (!item) return "";
+    let providerId = "";
+    if (item.provider && typeof item.provider === "string") {
+      providerId = item.provider.toLowerCase().trim();
+    } else if (item.id && typeof item.id === "string" && item.id.startsWith("remote:")) {
+      const parts = item.id.split(":");
+      if (parts.length >= 2 && parts[1]) {
+        providerId = parts[1].toLowerCase().trim();
+      }
+    } else if (item.url && typeof item.url === "string") {
+      if (item.url.includes("weebcentral.com")) providerId = "weebcentral";
+      else if (item.url.includes("nhentai.net")) providerId = "nhentai";
+    }
+
+    if (providerDisplayNames[providerId]) {
+      return providerDisplayNames[providerId];
+    }
+    if (providerId === "weebcentral") return "WeebCentral";
+    if (providerId === "nhentai") return "nhentai";
+    return "";
+  }
+
   const RECENT_REMOTE_STORAGE_KEY = "local_manga_recent_remote";
 
   function getRecentRemoteSeries() {
@@ -639,16 +751,48 @@ document.addEventListener("DOMContentLoaded", () => {
     return [];
   }
 
-  function saveRecentRemoteSeries(seriesIdentifier, title, url) {
+  function saveRecentRemoteSeries(seriesIdentifier, title, url, extra = {}) {
     if (!seriesIdentifier) return;
     try {
-      const list = getRecentRemoteSeries().filter((item) => item && item.id !== seriesIdentifier);
-      list.unshift({
+      const existing = getRecentRemoteSeries();
+      const prevItem = existing.find((item) => item && item.id === seriesIdentifier);
+      const list = existing.filter((item) => item && item.id !== seriesIdentifier);
+
+      const resolvedTitle = (title && typeof title === "string" && !title.startsWith("remote:"))
+        ? title.trim()
+        : (prevItem && prevItem.title && !prevItem.title.startsWith("remote:"))
+        ? prevItem.title
+        : "";
+
+      const resolvedUrl = (url && typeof url === "string")
+        ? url.trim()
+        : (prevItem && prevItem.url)
+        ? prevItem.url
+        : "";
+
+      let resolvedPageCount = (extra && typeof extra.pageCount === "number" && extra.pageCount > 0)
+        ? extra.pageCount
+        : (extra && typeof extra.pages === "number" && extra.pages > 0)
+        ? extra.pages
+        : (prevItem && typeof prevItem.pageCount === "number")
+        ? prevItem.pageCount
+        : undefined;
+
+      const newItem = {
         id: seriesIdentifier,
-        title: (title || seriesIdentifier).trim(),
-        url: (url || "").trim()
-      });
-      // Minimal storage: keep at most 8 items
+        title: resolvedTitle || seriesIdentifier,
+        url: resolvedUrl
+      };
+      if (typeof resolvedPageCount === "number") {
+        newItem.pageCount = resolvedPageCount;
+      }
+      if (extra && extra.provider) {
+        newItem.provider = extra.provider;
+      } else if (prevItem && prevItem.provider) {
+        newItem.provider = prevItem.provider;
+      }
+
+      list.unshift(newItem);
       const trimmed = list.slice(0, 8);
       localStorage.setItem(RECENT_REMOTE_STORAGE_KEY, JSON.stringify(trimmed));
     } catch {}
@@ -680,22 +824,49 @@ document.addEventListener("DOMContentLoaded", () => {
 
     remoteRecentList.innerHTML = "";
     recent.forEach((item) => {
+      if (!item) return;
+
       const row = document.createElement("div");
       row.className = "remote-recent-item";
+      row.setAttribute("role", "listitem");
 
       const info = document.createElement("div");
       info.className = "remote-recent-info";
 
+      // Display series or gallery title; internal identifiers must never be shown
       const titleEl = document.createElement("div");
       titleEl.className = "remote-recent-title";
-      titleEl.textContent = item.title || item.id;
-
-      const urlEl = document.createElement("div");
-      urlEl.className = "remote-recent-url";
-      urlEl.textContent = item.url || item.id;
+      const rawTitle = (item.title || "").trim();
+      const isInternalId = !rawTitle || rawTitle.startsWith("remote:");
+      const displayTitle = isInternalId ? "Untitled Series" : rawTitle;
+      titleEl.textContent = displayTitle;
+      titleEl.title = displayTitle;
 
       info.appendChild(titleEl);
-      info.appendChild(urlEl);
+
+      // Subtitle with provider display name and page count (when available)
+      const providerName = getProviderDisplayName(item);
+      const pageCount = (typeof item.pageCount === "number" && item.pageCount > 0)
+        ? item.pageCount
+        : (typeof item.pages === "number" && item.pages > 0)
+        ? item.pages
+        : null;
+
+      let metaText = "";
+      if (providerName && pageCount !== null) {
+        metaText = `${providerName} · ${pageCount} ${pageCount === 1 ? "page" : "pages"}`;
+      } else if (providerName) {
+        metaText = providerName;
+      } else if (pageCount !== null) {
+        metaText = `${pageCount} ${pageCount === 1 ? "page" : "pages"}`;
+      }
+
+      if (metaText) {
+        const metaEl = document.createElement("div");
+        metaEl.className = "remote-recent-meta";
+        metaEl.textContent = metaText;
+        info.appendChild(metaEl);
+      }
 
       const actions = document.createElement("div");
       actions.className = "remote-recent-actions";
@@ -704,6 +875,7 @@ document.addEventListener("DOMContentLoaded", () => {
       openBtn.type = "button";
       openBtn.className = "btn-recent-open";
       openBtn.textContent = "Open";
+      openBtn.setAttribute("aria-label", `Open ${displayTitle}`);
       openBtn.addEventListener("click", () => {
         closeAllModals();
         window.location.hash = `#/series/${encodeURIComponent(item.id)}`;
@@ -713,9 +885,9 @@ document.addEventListener("DOMContentLoaded", () => {
       removeBtn.type = "button";
       removeBtn.className = "btn-recent-remove";
       removeBtn.title = "Remove from recents";
-      removeBtn.setAttribute("aria-label", `Remove ${item.title || item.id} from recent series`);
+      removeBtn.setAttribute("aria-label", `Remove ${displayTitle} from recent series`);
       removeBtn.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <path d="M18 6 6 18M6 6l12 12"/>
         </svg>
       `;
@@ -750,6 +922,8 @@ document.addEventListener("DOMContentLoaded", () => {
       remoteUrlInput.value = "";
     }
     setRemoteModalError("");
+    setFormatsDisclosureExpanded(false);
+    renderSupportedSources();
     renderRecentRemoteList();
 
     if (modalOverlay) modalOverlay.classList.remove("hidden");
@@ -760,7 +934,7 @@ document.addEventListener("DOMContentLoaded", () => {
   async function resolveAndOpenRemote(inputStr) {
     const raw = (inputStr || "").trim();
     if (!raw) {
-      setRemoteModalError("Please enter a WeebCentral series URL or identifier.");
+      setRemoteModalError("Please enter a remote series or gallery URL.");
       return;
     }
 
@@ -768,10 +942,12 @@ document.addEventListener("DOMContentLoaded", () => {
     let target = raw;
     if (target.startsWith("weebcentral.com/") || target.startsWith("www.weebcentral.com/")) {
       target = `https://${target}`;
+    } else if (target.startsWith("nhentai.net/") || target.startsWith("www.nhentai.net/")) {
+      target = `https://${target}`;
     }
 
     if (target.startsWith("http://")) {
-      setRemoteModalError("Insecure HTTP is not allowed. Only HTTPS WeebCentral URLs are supported.");
+      setRemoteModalError("Insecure HTTP is not allowed. Only HTTPS remote URLs are supported.");
       return;
     }
 
@@ -779,16 +955,31 @@ document.addEventListener("DOMContentLoaded", () => {
       try {
         const parsed = new URL(target);
         const host = parsed.hostname.toLowerCase();
-        if (host !== "weebcentral.com" && !host.endsWith(".weebcentral.com")) {
-          setRemoteModalError(`Unsupported provider '${host}'. Only WeebCentral URLs are currently supported.`);
+        const isWeebCentral = host === "weebcentral.com" || host.endsWith(".weebcentral.com");
+        const isNhentai = host === "nhentai.net" || host.endsWith(".nhentai.net");
+
+        if (!isWeebCentral && !isNhentai) {
+          setRemoteModalError(`Unsupported provider '${host}'. Only WeebCentral and nhentai URLs are currently supported.`);
           return;
         }
-        if (!parsed.pathname.startsWith("/series/")) {
-          setRemoteModalError("URL must point to a series page (e.g. https://weebcentral.com/series/<id>).");
+
+        if (isWeebCentral && !parsed.pathname.startsWith("/series/")) {
+          setRemoteModalError("URL must point to a WeebCentral series page (e.g. https://weebcentral.com/series/<id>).");
+          return;
+        }
+
+        if (isNhentai && !/^\/(?:g|api\/gallery|api\/v2\/galleries)\/\d+/.test(parsed.pathname)) {
+          setRemoteModalError("URL must point to an nhentai gallery page (e.g. https://nhentai.net/g/<id>/).");
           return;
         }
       } catch {
         setRemoteModalError("Malformed URL format.");
+        return;
+      }
+    } else if (target.startsWith("remote:nhentai:")) {
+      const gId = target.slice("remote:nhentai:".length).trim();
+      if (!/^\d+$/.test(gId)) {
+        setRemoteModalError("nhentai identifier must be numeric (e.g. remote:nhentai:177013).");
         return;
       }
     } else if (!target.startsWith("remote:weebcentral:")) {
@@ -796,7 +987,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (/^[a-zA-Z0-9_-]+$/.test(target)) {
         target = `remote:weebcentral:${target}`;
       } else {
-        setRemoteModalError("Please enter a valid WeebCentral series URL (e.g. https://weebcentral.com/series/...).");
+        setRemoteModalError("Please enter a valid remote URL (e.g. https://weebcentral.com/series/... or https://nhentai.net/g/...).");
         return;
       }
     }
@@ -819,10 +1010,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const data = await res.json();
       const canonicalId = data.series_identifier || target;
-      const title = (data.series && data.series.title) ? data.series.title : canonicalId;
+      const title = (data.series && data.series.title) ? data.series.title : "";
       const url = (data.series && data.series.url) ? data.series.url : target;
 
-      saveRecentRemoteSeries(canonicalId, title, url);
+      let pageCount = undefined;
+      if (data.series) {
+        if (data.series.metadata && typeof data.series.metadata.num_pages === "number" && data.series.metadata.num_pages > 0) {
+          pageCount = data.series.metadata.num_pages;
+        } else if (Array.isArray(data.series.chapters) && data.series.chapters[0] && Array.isArray(data.series.chapters[0].pages) && data.series.chapters[0].pages.length > 0) {
+          pageCount = data.series.chapters[0].pages.length;
+        }
+      }
+
+      saveRecentRemoteSeries(canonicalId, title, url, { pageCount, provider: data.provider });
       closeAllModals();
       window.location.hash = `#/series/${encodeURIComponent(canonicalId)}`;
     } catch (err) {
@@ -1616,12 +1816,16 @@ document.addEventListener("DOMContentLoaded", () => {
         const querySpan = document.getElementById("no-results-query");
         if (querySpan) querySpan.textContent = librarySearchQuery;
 
-        // If query looks like a WeebCentral URL or identifier, offer direct action
+        // If query looks like a remote URL or identifier, offer direct action
         const existingPrompt = libraryNoResults.querySelector(".search-remote-prompt");
         if (existingPrompt) existingPrompt.remove();
 
-        const isWeebCentralQuery = query.includes("weebcentral.com") || query.startsWith("remote:weebcentral:");
-        if (isWeebCentralQuery) {
+        const isRemoteQuery =
+          query.includes("weebcentral.com") ||
+          query.startsWith("remote:weebcentral:") ||
+          query.includes("nhentai.net") ||
+          query.startsWith("remote:nhentai:");
+        if (isRemoteQuery) {
           const promptDiv = document.createElement("div");
           promptDiv.className = "search-remote-prompt";
           promptDiv.style.marginTop = "14px";
@@ -2137,8 +2341,12 @@ document.addEventListener("DOMContentLoaded", () => {
       currentSeries = (isRemote && data && data.series) ? data.series : seriesName;
       if (isRemote) {
         const canonicalId = (data && data.series) ? data.series : seriesName;
-        const sTitle = (data && data.title) ? data.title : canonicalId;
-        saveRecentRemoteSeries(canonicalId, sTitle, data ? data.url : "");
+        const sTitle = (data && data.title) ? data.title : "";
+        let pageCount = undefined;
+        if (data && Array.isArray(data.chapters) && data.chapters.length === 1 && typeof data.chapters[0].image_count === "number" && data.chapters[0].image_count > 0) {
+          pageCount = data.chapters[0].image_count;
+        }
+        saveRecentRemoteSeries(canonicalId, sTitle, data ? data.url : "", { pageCount, provider: data ? data.provider : undefined });
       }
 
       currentSeriesBookmarks = new Set(readerData.bookmarks || []);
@@ -2906,6 +3114,13 @@ document.addEventListener("DOMContentLoaded", () => {
     btnCloseSettings.addEventListener("click", closeAllModals);
   }
 
+  if (remoteFormatsToggle) {
+    remoteFormatsToggle.addEventListener("click", (e) => {
+      e.preventDefault();
+      toggleFormatsDisclosure();
+    });
+  }
+
   if (btnCloseRemoteModal) {
     btnCloseRemoteModal.addEventListener("click", closeAllModals);
   }
@@ -3027,5 +3242,6 @@ document.addEventListener("DOMContentLoaded", () => {
   updateChapterOrderUI();
   loadSettings();
   loadProfile();
+  loadSupportedProviders();
   handleRoute();
 });

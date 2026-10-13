@@ -15,6 +15,7 @@ from providers.cache import (
     calculate_pages_metadata_size,
 )
 from providers.mock import MockProvider
+from providers.nhentai import NhentaiProvider
 from providers.weebcentral import WeebCentralProvider
 from providers.registry import (
     DuplicateProviderError,
@@ -81,6 +82,7 @@ __all__ = [
     "RedirectSecurityError",
     "MaxRedirectsExceededError",
     "MockProvider",
+    "NhentaiProvider",
     "WeebCentralProvider",
     "RemoteReaderService",
     "is_remote_series",

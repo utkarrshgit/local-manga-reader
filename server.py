@@ -1308,6 +1308,11 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
             return
 
         # 0c. Remote Provider API Endpoints
+        if path == "/api/remote/providers":
+            sources = self.remote_service.get_supported_sources()
+            self._send_json({"providers": sources})
+            return
+
         if path == "/api/remote/resolve":
             target_url = get_param("url")
             if not target_url:
