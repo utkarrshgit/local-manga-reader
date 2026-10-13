@@ -15,6 +15,7 @@ from providers.cache import (
     calculate_pages_metadata_size,
 )
 from providers.mock import MockProvider
+from providers.weebcentral import WeebCentralProvider
 from providers.registry import (
     DuplicateProviderError,
     ProviderError,
@@ -80,6 +81,7 @@ __all__ = [
     "RedirectSecurityError",
     "MaxRedirectsExceededError",
     "MockProvider",
+    "WeebCentralProvider",
     "RemoteReaderService",
     "is_remote_series",
 ]

@@ -119,10 +119,17 @@ class RemoteReaderService:
         self._lock = threading.RLock()
         self._state: Dict[str, Dict[str, Any]] = {}
 
-        # Ensure mock provider is available by default
+        # Ensure default providers are available
         if "mock" not in self.registry:
             try:
                 self.registry.register(MockProvider())
+            except Exception:
+                pass
+
+        if "weebcentral" not in self.registry:
+            try:
+                from providers.weebcentral import WeebCentralProvider
+                self.registry.register(WeebCentralProvider())
             except Exception:
                 pass
 
