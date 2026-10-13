@@ -470,6 +470,136 @@ class TestWeebCentralProvider(unittest.TestCase):
             self.provider.get_chapter_pages("not_found_ch")
 
     # -----------------------------------------------------------------------
+    # 5b. Chapter Title Parsing & UI Metadata Exclusion
+    # -----------------------------------------------------------------------
+
+    def test_parse_chapter_title_excludes_last_read_and_timestamp(self):
+        """Verify 'Last Read' metadata and <time> ISO timestamp are excluded from chapter title."""
+        html = """<!DOCTYPE html>
+        <html><body>
+            <h1>Chainsaw Man</h1>
+            <div id="chapter-list">
+                <a href="/chapters/01J76XZ001" class="flex justify-between items-center py-2 px-3">
+                    <span class="flex items-center gap-2">
+                        <span class="">Chapter 1</span>
+                    </span>
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs text-muted">Last Read</span>
+                        <time datetime="2024-09-07T17:04:15.717343Z">2024-09-07T17:04:15.717343Z</time>
+                    </div>
+                </a>
+            </div>
+        </body></html>"""
+        self.mock_client.set_response(
+            "https://weebcentral.com/series/01J_LAST_READ",
+            200,
+            html.encode("utf-8"),
+        )
+        series = self.provider.get_series("01J_LAST_READ")
+        self.assertEqual(len(series.chapters), 1)
+        ch = series.chapters[0]
+        self.assertEqual(ch.id, "01J76XZ001")
+        self.assertEqual(ch.title, "Chapter 1")
+        self.assertEqual(ch.chapter_number, 1.0)
+        self.assertEqual(ch.date, "2024-09-07T17:04:15.717343Z")
+
+    def test_parse_chapter_title_preserves_legitimate_extra_text(self):
+        """Preserve legitimate subtitles, specials, decimals, and words like 'Last Stand' or 'Prologue'."""
+        html = """<!DOCTYPE html>
+        <html><body>
+            <h1>Complex Titles Series</h1>
+            <a href="/chapters/ch_prologue">
+                <span class="flex items-center gap-2">
+                    <span>Prologue: The Awakening</span>
+                </span>
+                <time datetime="2024-01-01T00:00:00Z">2024-01-01T00:00:00Z</time>
+            </a>
+            <a href="/chapters/ch_1_5">
+                <span class="flex items-center gap-2">
+                    <span>Chapter 1.5 - Special Omake</span>
+                </span>
+                <time datetime="2024-01-02T00:00:00Z">2024-01-02T00:00:00Z</time>
+            </a>
+            <a href="/chapters/ch_50">
+                <span class="flex items-center gap-2">
+                    <span>Chapter 50 - The Last Stand</span>
+                </span>
+                <div>
+                    <span>Last Read</span>
+                    <time datetime="2024-09-07T17:04:15.717343Z">2024-09-07T17:04:15.717343Z</time>
+                </div>
+            </a>
+            <a href="/chapters/ch_100">
+                <span class="flex items-center gap-2">
+                    <span>Chapter 100: The Last Hero of 2024</span>
+                </span>
+                <time datetime="2024-12-31T23:59:59Z">2024-12-31T23:59:59Z</time>
+            </a>
+        </body></html>"""
+        self.mock_client.set_response(
+            "https://weebcentral.com/series/01J_LEGIT_TITLES",
+            200,
+            html.encode("utf-8"),
+        )
+        series = self.provider.get_series("01J_LEGIT_TITLES")
+        self.assertEqual(len(series.chapters), 4)
+
+        titles = [c.title for c in series.chapters]
+        numbers = [c.chapter_number for c in series.chapters]
+
+        self.assertEqual(
+            titles,
+            [
+                "Prologue: The Awakening",
+                "Chapter 1.5 - Special Omake",
+                "Chapter 50 - The Last Stand",
+                "Chapter 100: The Last Hero of 2024",
+            ],
+        )
+        self.assertEqual(numbers, [0.0, 1.5, 50.0, 100.0])
+
+    def test_parse_chapter_title_unread_weebcentral_row(self):
+        """Unread WeebCentral row with <time> tag does not leak timestamp into title."""
+        html = """<!DOCTYPE html>
+        <html><body>
+            <h1>Unread Series</h1>
+            <a href="/chapters/01J76XZ002" class="flex justify-between items-center py-2 px-3">
+                <span class="flex items-center gap-2">
+                    <span>Chapter 2 - Arrival in Tokyo</span>
+                </span>
+                <time datetime="2024-09-08T12:00:00Z">2024-09-08T12:00:00Z</time>
+            </a>
+        </body></html>"""
+        self.mock_client.set_response(
+            "https://weebcentral.com/series/01J_UNREAD",
+            200,
+            html.encode("utf-8"),
+        )
+        series = self.provider.get_series("01J_UNREAD")
+        self.assertEqual(len(series.chapters), 1)
+        ch = series.chapters[0]
+        self.assertEqual(ch.title, "Chapter 2 - Arrival in Tokyo")
+        self.assertEqual(ch.chapter_number, 2.0)
+        self.assertEqual(ch.date, "2024-09-08T12:00:00Z")
+
+    def test_parse_chapter_title_flat_text_fallback(self):
+        """Flat anchor markup without nested spans cleanly strips Last Read metadata."""
+        html = """<!DOCTYPE html>
+        <html><body>
+            <h1>Flat Series</h1>
+            <a href="/chapters/ch_flat">Chapter 1 Last Read 2024-09-07T17:04:15.717343Z</a>
+        </body></html>"""
+        self.mock_client.set_response(
+            "https://weebcentral.com/series/01J_FLAT",
+            200,
+            html.encode("utf-8"),
+        )
+        series = self.provider.get_series("01J_FLAT")
+        self.assertEqual(len(series.chapters), 1)
+        self.assertEqual(series.chapters[0].title, "Chapter 1")
+        self.assertEqual(series.chapters[0].chapter_number, 1.0)
+
+    # -----------------------------------------------------------------------
     # 6. Security & SSRF Protection
     # -----------------------------------------------------------------------
 

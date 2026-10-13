@@ -483,17 +483,8 @@ class WeebCentralProvider(BaseProvider):
                     continue
                 seen_chapter_ids.add(ch_id)
 
-                title_text = a_tag.text.strip()
-                if not title_text:
-                    title_text = f"Chapter {ch_id}"
-
+                title_text, date_str = self._parse_chapter_title_and_date(a_tag, ch_id)
                 ch_num = self._parse_chapter_number(title_text)
-
-                # Look for date in descendant <time> or sibling/child elements
-                date_str: Optional[str] = None
-                time_tag = a_tag.find_first("time")
-                if time_tag:
-                    date_str = time_tag.attrs.get("datetime") or time_tag.text.strip()
 
                 chapters.append(
                     RemoteChapter(
@@ -515,6 +506,76 @@ class WeebCentralProvider(BaseProvider):
             )
         )
         return chapters
+
+    def _parse_chapter_title_and_date(
+        self, a_tag: HTMLTagNode, ch_id: str
+    ) -> Tuple[str, Optional[str]]:
+        """
+        Extract clean chapter title and date from a chapter link element, excluding
+        unrelated UI metadata such as 'Last Read' badges and <time> timestamps.
+        """
+        # 1. Extract date from <time> tag if present
+        date_str: Optional[str] = None
+        time_tag = a_tag.find_first("time")
+        if time_tag:
+            date_str = time_tag.attrs.get("datetime") or time_tag.text.strip()
+            if not date_str:
+                date_str = None
+
+        # Helper to get text excluding <time> tags and 'last read' metadata nodes
+        def get_clean_node_text(node: HTMLTagNode) -> str:
+            if node.tag == "time":
+                return ""
+            fragments = list(node.text_fragments)
+            for child in node.children:
+                if child.tag == "time":
+                    continue
+                # If child is specifically a metadata badge containing 'last read'
+                child_text = child.text.strip().lower()
+                if child_text == "last read" or child.attrs.get("class", "").lower() in ("last-read", "last_read"):
+                    continue
+                fragments.append(get_clean_node_text(child))
+            return " ".join(" ".join(fragments).split())
+
+        title_candidate: Optional[str] = None
+
+        # 2. Check for WeebCentral's standard chapter title wrapper (span.flex / span.grow)
+        for span in a_tag.find_all("span"):
+            cls = span.attrs.get("class", "").lower()
+            if ("flex" in cls or "grow" in cls) and not span.find_first("time"):
+                t = get_clean_node_text(span).strip()
+                if t and t.lower() != "last read":
+                    title_candidate = t
+                    break
+
+        # 3. If no span.flex, check child elements of a_tag for the title container
+        if not title_candidate:
+            for child in a_tag.children:
+                if child.tag in ("time", "svg", "img", "i"):
+                    continue
+                if child.find_first("time") is not None:
+                    continue
+                c_text = get_clean_node_text(child).strip()
+                if c_text and c_text.lower() != "last read":
+                    title_candidate = c_text
+                    break
+
+        # 4. Fallback to clean text of the anchor itself excluding <time> and 'last read' nodes
+        if not title_candidate:
+            title_candidate = get_clean_node_text(a_tag).strip()
+
+        # 5. Sanitize any trailing UI metadata (e.g. 'Last Read ...', standalone ISO timestamps)
+        if title_candidate:
+            # Strip trailing Last Read metadata + optional timestamp/relative time
+            title_candidate = re.sub(r"\s+Last\s+Read(?:\s+.*)?$", "", title_candidate, flags=re.IGNORECASE)
+            # Strip trailing ISO 8601 timestamp (e.g. 2024-09-07T17:04:15.717343Z)
+            title_candidate = re.sub(r"\s+\d{4}-\d{2}-\d{2}(?:T[\d:\.]+Z?)?$", "", title_candidate)
+            title_candidate = title_candidate.strip()
+
+        if not title_candidate:
+            title_candidate = f"Chapter {ch_id}"
+
+        return title_candidate, date_str
 
     def _parse_chapter_number(self, text: str) -> Optional[float]:
         """Extract floating-point chapter number from chapter title string."""
