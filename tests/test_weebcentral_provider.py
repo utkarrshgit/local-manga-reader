@@ -17,11 +17,16 @@ Tests:
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Dict, List, Optional
 from unittest.mock import MagicMock, patch
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from providers.base import RemoteChapter, RemotePage, RemoteSeries
 from providers.cache import ChapterPageCache
@@ -842,7 +847,7 @@ class TestWeebCentralHTTPHandlerIntegration(unittest.TestCase):
 
         self.HandlerClass = MangaRequestHandler
         self.HandlerClass.library = self.library
-        self.HandlerClass.static_dir = Path(__file__).parent / "static"
+        self.HandlerClass.static_dir = PROJECT_ROOT / "static"
         self.HandlerClass.remote_service = self.service
 
     def tearDown(self) -> None:

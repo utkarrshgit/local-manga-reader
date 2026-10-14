@@ -19,12 +19,17 @@ import io
 import json
 import os
 import shutil
+import sys
 import tempfile
 import unittest
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import MagicMock, patch
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from providers.base import RemoteChapter, RemotePage, RemoteSeries
 from providers.cache import ChapterPageCache
@@ -151,7 +156,7 @@ class TestRemoteUIIntegration(unittest.TestCase):
 
         self.HandlerClass = MangaRequestHandler
         self.HandlerClass.library = self.library
-        self.HandlerClass.static_dir = Path(__file__).parent / "static"
+        self.HandlerClass.static_dir = PROJECT_ROOT / "static"
         self.HandlerClass.remote_service = self.remote_service
 
     def tearDown(self) -> None:
@@ -472,7 +477,7 @@ class TestRemoteUIIntegration(unittest.TestCase):
 
     def test_static_index_html_contains_remote_ui_elements(self) -> None:
         """index.html contains the simplified URL input, collapsible Supported URL formats disclosure, and recent list."""
-        index_file = Path(__file__).parent / "static" / "index.html"
+        index_file = PROJECT_ROOT / "static" / "index.html"
         self.assertTrue(index_file.is_file())
         content = index_file.read_text(encoding="utf-8")
 
@@ -503,7 +508,7 @@ class TestRemoteUIIntegration(unittest.TestCase):
 
     def test_static_style_css_contains_remote_and_retry_styles(self) -> None:
         """style.css contains styles for remote UI controls, collapsible disclosure, and recent entries."""
-        css_file = Path(__file__).parent / "static" / "style.css"
+        css_file = PROJECT_ROOT / "static" / "style.css"
         self.assertTrue(css_file.is_file())
         content = css_file.read_text(encoding="utf-8")
 
@@ -524,7 +529,7 @@ class TestRemoteUIIntegration(unittest.TestCase):
 
     def test_static_app_js_remote_integration_and_dom_safety(self) -> None:
         """app.js contains remote series routing, validation, collapsible formats disclosure, and safe recent display."""
-        app_js = Path(__file__).parent / "static" / "app.js"
+        app_js = PROJECT_ROOT / "static" / "app.js"
         self.assertTrue(app_js.is_file())
         content = app_js.read_text(encoding="utf-8")
 

@@ -10,6 +10,11 @@ import sys
 import subprocess
 import time
 import zipfile
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from server import MangaLibrary, natural_sort_key
 
 
@@ -114,7 +119,7 @@ class TestHTTPHandler(unittest.TestCase):
                 pass
 
         CustomHandler.library = self.library
-        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler.static_dir = PROJECT_ROOT / "static"
         CustomHandler(sock, ("127.0.0.1", 8000), None)
 
         sock.wfile.seek(0)
@@ -149,7 +154,7 @@ class TestHTTPHandler(unittest.TestCase):
                 pass
 
         CustomHandler.library = self.library
-        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler.static_dir = PROJECT_ROOT / "static"
         CustomHandler(sock, ("127.0.0.1", 8000), None)
 
         sock.wfile.seek(0)
@@ -183,7 +188,7 @@ class TestHTTPHandler(unittest.TestCase):
                 pass
 
         CustomHandler.library = self.library
-        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler.static_dir = PROJECT_ROOT / "static"
         CustomHandler(sock, ("127.0.0.1", 8000), None)
 
         sock.wfile.seek(0)
@@ -215,7 +220,7 @@ class TestHTTPHandler(unittest.TestCase):
                 pass
 
         CustomHandler.library = self.library
-        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler.static_dir = PROJECT_ROOT / "static"
         CustomHandler(sock, ("127.0.0.1", 8000), None)
 
         sock.wfile.seek(0)
@@ -514,7 +519,7 @@ class TestPhase6Features(unittest.TestCase):
                     self.finish()
 
         CustomHandler.library = getattr(self.MangaRequestHandler, "library", self.library)
-        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler.static_dir = PROJECT_ROOT / "static"
         CustomHandler(sock, ("127.0.0.1", 8000), None)
         self.library = CustomHandler.library
 
@@ -546,7 +551,7 @@ class TestPhase6Features(unittest.TestCase):
                     self.finish()
 
         CustomHandler.library = getattr(self.MangaRequestHandler, "library", self.library)
-        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler.static_dir = PROJECT_ROOT / "static"
         CustomHandler(sock, ("127.0.0.1", 8000), None)
         self.library = CustomHandler.library
 
@@ -580,7 +585,7 @@ class TestPhase6Features(unittest.TestCase):
                 pass
 
         CustomHandler.library = self.library
-        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler.static_dir = PROJECT_ROOT / "static"
         CustomHandler(sock, ("127.0.0.1", 8000), None)
 
         output = sock.wfile.getvalue()
@@ -611,7 +616,7 @@ class TestPhase6Features(unittest.TestCase):
                 pass
 
         CustomHandler.library = self.library
-        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler.static_dir = PROJECT_ROOT / "static"
         CustomHandler(sock, ("127.0.0.1", 8000), None)
 
         output = sock.wfile.getvalue()
@@ -1562,7 +1567,7 @@ class TestPhase6Features(unittest.TestCase):
 
 class TestMacOSLauncher(unittest.TestCase):
     def setUp(self):
-        self.project_dir = Path(__file__).parent.resolve()
+        self.project_dir = PROJECT_ROOT
         self.launcher_path = self.project_dir / "start-mac.command"
 
     def test_launcher_attributes_and_no_hardcoded_paths(self):
@@ -1652,7 +1657,7 @@ fi
 
 class TestWindowsLauncher(unittest.TestCase):
     def setUp(self):
-        self.project_dir = Path(__file__).parent.resolve()
+        self.project_dir = PROJECT_ROOT
         self.batch_path = self.project_dir / "start-windows.bat"
 
     def test_windows_launcher_attributes_and_no_hardcoded_paths(self):
@@ -1719,7 +1724,7 @@ class TestWindowsLauncher(unittest.TestCase):
 
 class TestLinuxLauncher(unittest.TestCase):
     def setUp(self):
-        self.project_dir = Path(__file__).parent.resolve()
+        self.project_dir = PROJECT_ROOT
         self.launcher_path = self.project_dir / "start-linux.sh"
 
     def test_linux_launcher_attributes_and_no_hardcoded_paths(self):
@@ -1965,7 +1970,7 @@ class TestArchiveAndFlexibleDiscovery(unittest.TestCase):
                 pass
 
         CustomHandler.library = self.library
-        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler.static_dir = PROJECT_ROOT / "static"
         CustomHandler(sock, ("127.0.0.1", 8000), None)
 
         sock.wfile.seek(0)
@@ -2000,7 +2005,7 @@ class TestArchiveAndFlexibleDiscovery(unittest.TestCase):
                 pass
 
         CustomHandler.library = self.library
-        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler.static_dir = PROJECT_ROOT / "static"
         CustomHandler(sock, ("127.0.0.1", 8000), None)
 
         sock.wfile.seek(0)
@@ -2447,7 +2452,7 @@ class TestUserProfile(unittest.TestCase):
                 pass
 
         CustomHandler.library = self.library
-        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler.static_dir = PROJECT_ROOT / "static"
         CustomHandler(sock, ("127.0.0.1", 8000), None)
 
         sock.wfile.seek(0)
@@ -2630,7 +2635,7 @@ class TestSettingsAndAppearance(unittest.TestCase):
                 pass
 
         CustomHandler.library = self.library
-        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler.static_dir = PROJECT_ROOT / "static"
         CustomHandler(sock, ("127.0.0.1", 8000), None)
 
         sock.wfile.seek(0)
@@ -2809,7 +2814,7 @@ class TestLibrarySortChapterOrderAndThemes(unittest.TestCase):
                 pass
 
         CustomHandler.library = self.library
-        CustomHandler.static_dir = Path(__file__).parent / "static"
+        CustomHandler.static_dir = PROJECT_ROOT / "static"
         CustomHandler(sock, ("127.0.0.1", 8000), None)
 
         sock.wfile.seek(0)
@@ -3082,7 +3087,7 @@ class TestLibraryStartupAndResolution(unittest.TestCase):
             def log_message(self, *args):
                 pass
         Handler.library = lib
-        Handler.static_dir = Path(__file__).parent / "static"
+        Handler.static_dir = PROJECT_ROOT / "static"
 
         # GET /api/library
         h, body = self._simulate_get(Handler, "/api/library")

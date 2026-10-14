@@ -19,7 +19,12 @@ import io
 import os
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import server
 from providers import default_registry
@@ -174,10 +179,10 @@ class TestCLIRemoteURLSupport(unittest.TestCase):
 
     def test_api_status_includes_startup_url(self) -> None:
         """The /api/status endpoint should include the startup_url property."""
-        from test_remote_ui_integration import MockSocket
+        from tests.test_remote_ui_integration import MockSocket
         server.MangaRequestHandler.startup_url = "http://localhost:8000/#/series/remote%3Anhentai%3A686216"
         server.MangaRequestHandler.library = server.MangaLibrary(None)
-        server.MangaRequestHandler.static_dir = server.Path(__file__).parent / "static"
+        server.MangaRequestHandler.static_dir = PROJECT_ROOT / "static"
 
         req = b"GET /api/status HTTP/1.1\r\nHost: localhost\r\n\r\n"
         sock = MockSocket(req)

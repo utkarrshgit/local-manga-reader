@@ -17,12 +17,17 @@ import io
 import json
 import os
 import shutil
+import sys
 import tempfile
 import unittest
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from providers.base import BaseProvider, RemoteChapter, RemotePage, RemoteSeries
 from providers.cache import ChapterPageCache
@@ -109,7 +114,7 @@ class BaseReaderIntegrationTestCase(unittest.TestCase):
 
         self.HandlerClass = MangaRequestHandler
         self.HandlerClass.library = self.library
-        self.HandlerClass.static_dir = Path(__file__).parent / "static"
+        self.HandlerClass.static_dir = PROJECT_ROOT / "static"
         self.HandlerClass.remote_service = self.remote_service
 
     def tearDown(self) -> None:
