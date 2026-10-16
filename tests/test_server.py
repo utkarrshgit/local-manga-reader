@@ -3415,6 +3415,361 @@ class TestSettingsLibraryPathAndMigration(unittest.TestCase):
         self.assertEqual(disk_data2.get("library_path"), lib_path)
 
 
+class TestLibraryPinningAndChapterCompletion(unittest.TestCase):
+    def setUp(self):
+        from server import (
+            MangaRequestHandler,
+            load_pinned_series,
+            save_pinned_series,
+            toggle_pin_series,
+            load_app_settings,
+            save_app_settings,
+        )
+        self.MangaRequestHandler = MangaRequestHandler
+        self.load_pinned_series = staticmethod(load_pinned_series)
+        self.save_pinned_series = staticmethod(save_pinned_series)
+        self.toggle_pin_series = staticmethod(toggle_pin_series)
+        self.load_app_settings = staticmethod(load_app_settings)
+        self.save_app_settings = staticmethod(save_app_settings)
+
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.config_dir = Path(self.temp_dir.name) / "config"
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.orig_config_dir = os.environ.get("LOCAL_MANGA_CONFIG_DIR")
+        os.environ["LOCAL_MANGA_CONFIG_DIR"] = str(self.config_dir)
+
+        self.manga_dir = Path(self.temp_dir.name) / "manga"
+        self.manga_dir.mkdir(parents=True, exist_ok=True)
+        self.series_path = self.manga_dir / "TestSeries"
+        self.series_path.mkdir(parents=True, exist_ok=True)
+
+        ch1 = self.series_path / "Chapter 1"
+        ch1.mkdir()
+        (ch1 / "1.jpg").write_bytes(b"DATA1")
+        (ch1 / "2.jpg").write_bytes(b"DATA2")
+
+        ch2 = self.series_path / "Chapter 2"
+        ch2.mkdir()
+        (ch2 / "1.jpg").write_bytes(b"DATA1")
+
+        self.library = MangaLibrary(str(self.manga_dir))
+
+    def tearDown(self):
+        if self.orig_config_dir is not None:
+            os.environ["LOCAL_MANGA_CONFIG_DIR"] = self.orig_config_dir
+        else:
+            os.environ.pop("LOCAL_MANGA_CONFIG_DIR", None)
+        self.temp_dir.cleanup()
+
+    def _simulate_get(self, path: str):
+        raw_request = f"GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n".encode("utf-8")
+        sock = MockSocket(raw_request)
+
+        class CustomHandler(self.MangaRequestHandler):
+            def __init__(self, request, client_address, server):
+                self.request = request
+                self.client_address = client_address
+                self.server = server
+                self.setup()
+                try:
+                    self.handle()
+                finally:
+                    self.finish()
+
+            def log_message(self, format, *args):
+                pass
+
+        CustomHandler.library = self.library
+        CustomHandler.static_dir = PROJECT_ROOT / "static"
+        CustomHandler(sock, ("127.0.0.1", 8000), None)
+
+        sock.wfile.seek(0)
+        response_data = sock.wfile.read()
+        header_end = response_data.find(b"\r\n\r\n")
+        headers = response_data[:header_end].decode("utf-8", errors="replace")
+        body = response_data[header_end + 4:]
+        return headers, body
+
+    def _simulate_post(self, path: str, json_data: dict):
+        body_bytes = json.dumps(json_data).encode("utf-8")
+        raw_request = (
+            f"POST {path} HTTP/1.1\r\n"
+            f"Host: localhost\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: {len(body_bytes)}\r\n\r\n"
+        ).encode("utf-8") + body_bytes
+        sock = MockSocket(raw_request)
+
+        class CustomHandler(self.MangaRequestHandler):
+            def __init__(self, request, client_address, server):
+                self.request = request
+                self.client_address = client_address
+                self.server = server
+                self.setup()
+                try:
+                    self.handle()
+                finally:
+                    self.finish()
+
+            def log_message(self, format, *args):
+                pass
+
+        CustomHandler.library = self.library
+        CustomHandler.static_dir = PROJECT_ROOT / "static"
+        CustomHandler(sock, ("127.0.0.1", 8000), None)
+
+        sock.wfile.seek(0)
+        response_data = sock.wfile.read()
+        header_end = response_data.find(b"\r\n\r\n")
+        headers = response_data[:header_end].decode("utf-8", errors="replace")
+        body = response_data[header_end + 4:]
+        return headers, body
+
+    def test_pin_and_unpin_series(self):
+        """Pin and unpin series via helper functions and POST /api/pin."""
+        # Initial state: empty
+        self.assertEqual(self.load_pinned_series(), [])
+
+        # Pin via helper
+        is_pinned, pinned = self.toggle_pin_series("TestSeries", True)
+        self.assertTrue(is_pinned)
+        self.assertIn("TestSeries", pinned)
+        self.assertEqual(self.load_pinned_series(), ["TestSeries"])
+
+        # Unpin via helper
+        is_pinned2, pinned2 = self.toggle_pin_series("TestSeries", False)
+        self.assertFalse(is_pinned2)
+        self.assertNotIn("TestSeries", pinned2)
+        self.assertEqual(self.load_pinned_series(), [])
+
+        # Pin via POST /api/pin
+        h, b = self._simulate_post("/api/pin", {"series": "TestSeries", "pinned": True})
+        self.assertIn("200 OK", h)
+        res = json.loads(b.decode("utf-8"))
+        self.assertTrue(res["success"])
+        self.assertTrue(res["pinned"])
+        self.assertIn("TestSeries", res["pinned_series"])
+
+        # GET /api/pinned
+        gh, gb = self._simulate_get("/api/pinned")
+        self.assertIn("200 OK", gh)
+        gres = json.loads(gb.decode("utf-8"))
+        self.assertEqual(gres["pinned"], ["TestSeries"])
+
+        # GET /api/series includes pinned list
+        sh, sb = self._simulate_get("/api/series")
+        self.assertIn("200 OK", sh)
+        sres = json.loads(sb.decode("utf-8"))
+        self.assertIn("pinned", sres)
+        self.assertEqual(sres["pinned"], ["TestSeries"])
+
+        # Unpin via POST /api/pin
+        h2, b2 = self._simulate_post("/api/pin", {"series": "TestSeries", "pinned": False})
+        self.assertIn("200 OK", h2)
+        res2 = json.loads(b2.decode("utf-8"))
+        self.assertTrue(res2["success"])
+        self.assertFalse(res2["pinned"])
+        self.assertNotIn("TestSeries", res2["pinned_series"])
+
+    def test_pin_persistence_across_settings_reload(self):
+        """Pinned series persist in settings.json alongside other configuration without corruption."""
+        # Set a theme first
+        self.save_app_settings(theme="kuromi")
+        self.assertEqual(self.load_pinned_series(), [])
+
+        # Pin two series
+        self.save_pinned_series(["Series1", "Series2"])
+        settings_file = self.config_dir / "settings.json"
+        disk = json.loads(settings_file.read_text(encoding="utf-8"))
+        self.assertEqual(disk.get("theme"), "kuromi")
+        self.assertEqual(disk.get("pinned"), ["Series1", "Series2"])
+
+        # Reloading returns the same pinned series
+        self.assertEqual(self.load_pinned_series(), ["Series1", "Series2"])
+
+        # Updating theme preserves pinned series
+        self.save_app_settings(theme="crimson")
+        disk2 = json.loads(settings_file.read_text(encoding="utf-8"))
+        self.assertEqual(disk2.get("theme"), "crimson")
+        self.assertEqual(disk2.get("pinned"), ["Series1", "Series2"])
+
+    def test_local_and_remote_identity_isolation_in_pinning(self):
+        """Local and remote series identities are isolated and do not collide."""
+        local_series = "Solo Leveling"
+        remote_series = "remote:weebcentral:01J76XY8CM99"
+        remote_mock = "remote:mock:sololeveling"
+
+        # Pin local and remote series
+        self.toggle_pin_series(local_series, True)
+        self.toggle_pin_series(remote_series, True)
+        self.toggle_pin_series(remote_mock, True)
+
+        pinned = self.load_pinned_series()
+        self.assertEqual(len(pinned), 3)
+        self.assertIn(local_series, pinned)
+        self.assertIn(remote_series, pinned)
+        self.assertIn(remote_mock, pinned)
+
+        # Unpin only local series; remote series remain intact
+        self.toggle_pin_series(local_series, False)
+        pinned2 = self.load_pinned_series()
+        self.assertEqual(len(pinned2), 2)
+        self.assertNotIn(local_series, pinned2)
+        self.assertIn(remote_series, pinned2)
+        self.assertIn(remote_mock, pinned2)
+
+    def test_pin_api_validation(self):
+        """POST /api/pin validates inputs and returns 400 for bad payloads."""
+        # Missing series
+        h1, b1 = self._simulate_post("/api/pin", {"pinned": True})
+        self.assertIn("400 Bad Request", h1)
+
+        # Non-string series
+        h2, b2 = self._simulate_post("/api/pin", {"series": 123, "pinned": True})
+        self.assertIn("400 Bad Request", h2)
+
+        # Non-boolean pinned
+        h3, b3 = self._simulate_post("/api/pin", {"series": "TestSeries", "pinned": "yes"})
+        self.assertIn("400 Bad Request", h3)
+
+    def test_mark_chapter_read_and_unread_completion_state(self):
+        """Marking a chapter read adds it to completed; marking unread adds it to unread and clears completed."""
+        # Initially, reader data has no completed or unread
+        init_data = self.library.get_reader_data("TestSeries")
+        self.assertNotIn("completed", init_data)
+        self.assertNotIn("unread", init_data)
+
+        # Mark Chapter 1 as completed via POST /api/complete
+        h1, b1 = self._simulate_post("/api/complete", {
+            "series": "TestSeries",
+            "chapter": "Chapter 1",
+            "completed": True
+        })
+        self.assertIn("200 OK", h1)
+        r1 = json.loads(b1.decode("utf-8"))
+        self.assertTrue(r1["success"])
+        self.assertIn("Chapter 1", r1["completed_chapters"])
+        self.assertNotIn("Chapter 1", r1["unread_chapters"])
+
+        # Check reader data on disk
+        data1 = self.library.get_reader_data("TestSeries")
+        self.assertIn("Chapter 1", data1.get("completed", []))
+        self.assertNotIn("Chapter 1", data1.get("unread", []))
+
+        # Mark Chapter 1 as unread via POST /api/complete
+        h2, b2 = self._simulate_post("/api/complete", {
+            "series": "TestSeries",
+            "chapter": "Chapter 1",
+            "completed": False
+        })
+        self.assertIn("200 OK", h2)
+        r2 = json.loads(b2.decode("utf-8"))
+        self.assertTrue(r2["success"])
+        self.assertNotIn("Chapter 1", r2["completed_chapters"])
+        self.assertIn("Chapter 1", r2["unread_chapters"])
+
+        data2 = self.library.get_reader_data("TestSeries")
+        self.assertNotIn("Chapter 1", data2.get("completed", []))
+        self.assertIn("Chapter 1", data2.get("unread", []))
+
+    def test_reading_position_preserved_when_completion_changes(self):
+        """Saved reading position (progress) is not modified when marking a chapter read or unread."""
+        # Save reading position at 2.jpg
+        h_prog, _ = self._simulate_post("/api/progress", {
+            "series": "TestSeries",
+            "chapter": "Chapter 1",
+            "image": "2.jpg"
+        })
+        self.assertIn("200 OK", h_prog)
+
+        # Verify progress is saved
+        data_before = self.library.get_reader_data("TestSeries")
+        self.assertEqual(data_before["progress"]["Chapter 1"], "2.jpg")
+
+        # Mark as read
+        self._simulate_post("/api/complete", {
+            "series": "TestSeries",
+            "chapter": "Chapter 1",
+            "completed": True
+        })
+        data_after_read = self.library.get_reader_data("TestSeries")
+        self.assertEqual(data_after_read["progress"]["Chapter 1"], "2.jpg")
+        self.assertIn("Chapter 1", data_after_read["completed"])
+
+        # Mark as unread
+        self._simulate_post("/api/complete", {
+            "series": "TestSeries",
+            "chapter": "Chapter 1",
+            "completed": False
+        })
+        data_after_unread = self.library.get_reader_data("TestSeries")
+        self.assertEqual(data_after_unread["progress"]["Chapter 1"], "2.jpg")
+        self.assertNotIn("Chapter 1", data_after_unread.get("completed", []))
+        self.assertIn("Chapter 1", data_after_unread["unread"])
+
+    def test_progress_update_preserves_completed_and_unread(self):
+        """Updating progress while scrolling preserves completed and unread sets."""
+        # Mark Chapter 1 completed, Chapter 2 unread
+        self.library.set_chapter_completion("TestSeries", "Chapter 1", True)
+        self.library.set_chapter_completion("TestSeries", "Chapter 2", False)
+
+        # Update progress on Chapter 1
+        h, b = self._simulate_post("/api/progress", {
+            "series": "TestSeries",
+            "chapter": "Chapter 1",
+            "image": "1.jpg"
+        })
+        self.assertIn("200 OK", h)
+        res = json.loads(b.decode("utf-8"))
+        self.assertEqual(res["progress"]["Chapter 1"], "1.jpg")
+        
+        # Verify completed and unread states persist on disk
+        data = self.library.get_reader_data("TestSeries")
+        self.assertIn("Chapter 1", data.get("completed", []))
+        self.assertIn("Chapter 2", data.get("unread", []))
+
+    def test_archive_series_completion_normalization(self):
+        """Completion state normalizes archive extensions (.cbz/.zip) correctly."""
+        # Create a series with a .cbz chapter
+        cbz_series = self.manga_dir / "ArchiveSeries"
+        cbz_series.mkdir()
+        cbz_file = cbz_series / "Vol 1.cbz"
+        with zipfile.ZipFile(str(cbz_file), "w") as z:
+            z.writestr("01.jpg", b"JPGDATA")
+
+        lib = MangaLibrary(str(self.manga_dir))
+        res1 = lib.set_chapter_completion("ArchiveSeries", "Vol 1.cbz", True)
+        self.assertIsNotNone(res1)
+        self.assertIn("Vol 1", res1.get("completed", []))
+
+        data = lib.get_reader_data("ArchiveSeries")
+        self.assertIn("Vol 1", data.get("completed", []))
+
+        # Check with unread
+        res2 = lib.set_chapter_completion("ArchiveSeries", "Vol 1", False)
+        self.assertIsNotNone(res2)
+        self.assertNotIn("Vol 1", res2.get("completed", []))
+        self.assertIn("Vol 1", res2.get("unread", []))
+
+    def test_complete_api_validation(self):
+        """POST /api/complete validates parameters and returns 400 for bad payloads."""
+        # Missing series
+        h1, _ = self._simulate_post("/api/complete", {"chapter": "Ch 1", "completed": True})
+        self.assertIn("400 Bad Request", h1)
+
+        # Missing chapter
+        h2, _ = self._simulate_post("/api/complete", {"series": "TestSeries", "completed": True})
+        self.assertIn("400 Bad Request", h2)
+
+        # Non-boolean completed
+        h3, _ = self._simulate_post("/api/complete", {"series": "TestSeries", "chapter": "Ch 1", "completed": "true"})
+        self.assertIn("400 Bad Request", h3)
+
+        # Non-existent series
+        h4, _ = self._simulate_post("/api/complete", {"series": "NoSuchSeries", "chapter": "Ch 1", "completed": True})
+        self.assertIn("404 Not Found", h4)
+
+
 if __name__ == "__main__":
     unittest.main()
 

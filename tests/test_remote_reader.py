@@ -767,6 +767,85 @@ class TestRemoteProgressBookmarksAndReadingModes(BaseReaderIntegrationTestCase):
         )
         self.assertEqual(traversal_status, HTTPStatus.NOT_FOUND)
 
+    def test_remote_chapter_completion_and_progress_isolation(self):
+        """POST /api/remote/complete sets completed and unread states for remote series while preserving reading position."""
+        # 1. Set progress on remote chapter
+        _, p_body, p_status = self.simulate_post(
+            "/api/progress",
+            {"series": "remote:mock:sololeveling", "chapter": "mock-ch-1", "image": "2.jpg"}
+        )
+        self.assertEqual(p_status, HTTPStatus.OK)
+        self.assertEqual(json.loads(p_body.decode("utf-8"))["progress"]["mock-ch-1"], "2.jpg")
+
+        # 2. Mark remote chapter as completed
+        _, c_body, c_status = self.simulate_post(
+            "/api/remote/complete",
+            {"series": "remote:mock:sololeveling", "chapter": "mock-ch-1", "completed": True}
+        )
+        self.assertEqual(c_status, HTTPStatus.OK)
+        c_res = json.loads(c_body.decode("utf-8"))
+        self.assertTrue(c_res["success"])
+        self.assertIn("mock-ch-1", c_res["completed_chapters"])
+        self.assertNotIn("mock-ch-1", c_res["unread_chapters"])
+
+        # 3. Verify reading position is intact
+        _, r_body, r_status = self.simulate_get("/api/reader-data?series=remote:mock:sololeveling")
+        self.assertEqual(r_status, HTTPStatus.OK)
+        r_data = json.loads(r_body.decode("utf-8"))
+        self.assertEqual(r_data["progress"]["mock-ch-1"], "2.jpg")
+        self.assertIn("mock-ch-1", r_data["completed"])
+
+        # 4. Mark remote chapter as unread
+        _, u_body, u_status = self.simulate_post(
+            "/api/remote/complete",
+            {"series": "remote:mock:sololeveling", "chapter": "mock-ch-1", "completed": False}
+        )
+        self.assertEqual(u_status, HTTPStatus.OK)
+        u_res = json.loads(u_body.decode("utf-8"))
+        self.assertTrue(u_res["success"])
+        self.assertNotIn("mock-ch-1", u_res["completed_chapters"])
+        self.assertIn("mock-ch-1", u_res["unread_chapters"])
+
+        # 5. Position is still intact and chapter is in unread
+        _, r2_body, _ = self.simulate_get("/api/reader-data?series=remote:mock:sololeveling")
+        r2_data = json.loads(r2_body.decode("utf-8"))
+        self.assertEqual(r2_data["progress"]["mock-ch-1"], "2.jpg")
+        self.assertNotIn("mock-ch-1", r2_data.get("completed", []))
+        self.assertIn("mock-ch-1", r2_data["unread"])
+
+        # 6. Reject invalid requests
+        _, _, bad1 = self.simulate_post("/api/remote/complete", {"chapter": "mock-ch-1", "completed": True})
+        self.assertEqual(bad1, HTTPStatus.BAD_REQUEST)
+
+        _, _, bad2 = self.simulate_post("/api/remote/complete", {"series": "not-remote", "chapter": "ch-1", "completed": True})
+        self.assertEqual(bad2, HTTPStatus.BAD_REQUEST)
+
+    def test_remote_last_read_tracking_and_persistence(self):
+        """Updating progress on remote series updates and persists last_read across reloads."""
+        # 1. Update progress
+        _, p_body, p_status = self.simulate_post(
+            "/api/progress",
+            {"series": "remote:mock:sololeveling", "chapter": "mock-ch-2", "image": "3.jpg"}
+        )
+        self.assertEqual(p_status, HTTPStatus.OK)
+        p_res = json.loads(p_body.decode("utf-8"))
+        self.assertEqual(p_res.get("last_read"), "mock-ch-2")
+
+        # 2. Verify reader-data returns last_read
+        _, r_body, r_status = self.simulate_get("/api/reader-data?series=remote:mock:sololeveling")
+        self.assertEqual(r_status, HTTPStatus.OK)
+        r_res = json.loads(r_body.decode("utf-8"))
+        self.assertEqual(r_res.get("last_read"), "mock-ch-2")
+
+        # 3. Completing chapter preserves last_read
+        self.simulate_post(
+            "/api/remote/complete",
+            {"series": "remote:mock:sololeveling", "chapter": "mock-ch-2", "completed": True}
+        )
+        _, r2_body, _ = self.simulate_get("/api/reader-data?series=remote:mock:sololeveling")
+        r2_res = json.loads(r2_body.decode("utf-8"))
+        self.assertEqual(r2_res.get("last_read"), "mock-ch-2")
+
 
 if __name__ == "__main__":
     unittest.main()

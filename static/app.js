@@ -22,6 +22,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const libraryUnavailable = document.getElementById("library-unavailable");
   const unavailableFolderPath = document.getElementById("unavailable-folder-path");
   const btnReconnectFolder = document.getElementById("btn-reconnect-folder");
+  const pinnedSection = document.getElementById("pinned-section");
+  const pinnedGrid = document.getElementById("pinned-grid");
+  const pinnedSectionCount = document.getElementById("pinned-section-count");
 
   // DOM Elements - Profile & Settings
   const headerProfileBtn = document.getElementById("header-profile-btn");
@@ -89,6 +92,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const seriesLinksPanel = document.getElementById("series-links-panel");
   const seriesLinksList = document.getElementById("series-links-list");
   const btnEditMetadata = document.getElementById("btn-edit-metadata");
+
+  const seriesActionBar = document.getElementById("series-action-bar");
+  const btnResumeReading = document.getElementById("btn-resume-reading");
+  const resumeReadingText = document.getElementById("resume-reading-text");
+  const btnPinSeries = document.getElementById("btn-pin-series");
+  const pinSeriesText = document.getElementById("pin-series-text");
+  const seriesCompletedBadge = document.getElementById("series-completed-badge");
 
   // DOM Elements - Metadata Editor
   const seriesMetadataEditor = document.getElementById("series-metadata-editor");
@@ -166,6 +176,11 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentNextChapter = null;
   let currentChapterImages = [];
   const chapterImagesCache = new Map();
+  let pinnedSeriesSet = new Set();
+  let currentSeriesCompleted = new Set();
+  let currentSeriesUnread = new Set();
+  let currentSeriesLastRead = null;
+  let activeReaderComplete = null;
 
   // Load saved preferences
   try {
@@ -1475,28 +1490,294 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // Pin Series Action
+  async function togglePinSeries(seriesName, shouldPin = null) {
+    if (!seriesName) return;
+    const currentlyPinned = pinnedSeriesSet.has(seriesName);
+    const targetState = shouldPin !== null ? Boolean(shouldPin) : !currentlyPinned;
+
+    if (targetState) {
+      pinnedSeriesSet.add(seriesName);
+    } else {
+      pinnedSeriesSet.delete(seriesName);
+    }
+    updatePinButtons(seriesName, targetState);
+    renderLibrarySeries();
+
+    try {
+      const res = await fetch("/api/pin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ series: seriesName, pinned: targetState })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.pinned_series)) {
+          pinnedSeriesSet = new Set(data.pinned_series);
+        }
+        updatePinButtons(seriesName, pinnedSeriesSet.has(seriesName));
+        renderLibrarySeries();
+      }
+    } catch (err) {
+      if (currentlyPinned) {
+        pinnedSeriesSet.add(seriesName);
+      } else {
+        pinnedSeriesSet.delete(seriesName);
+      }
+      updatePinButtons(seriesName, currentlyPinned);
+      renderLibrarySeries();
+      showError(`Failed to update pin state: ${err.message}`);
+    }
+  }
+
+  function updatePinButtons(seriesName, isPinned) {
+    const sName = seriesName || currentSeries;
+    const pinned = typeof isPinned === "boolean" ? isPinned : (sName ? pinnedSeriesSet.has(sName) : false);
+    if (currentSeries === sName && btnPinSeries && pinSeriesText) {
+      btnPinSeries.classList.toggle("pinned", pinned);
+      pinSeriesText.textContent = pinned ? "Pinned" : "Pin Series";
+      btnPinSeries.title = pinned ? "Unpin series from library" : "Pin series to library";
+      btnPinSeries.setAttribute("aria-label", pinned ? "Unpin series from library" : "Pin series to library");
+    }
+  }
+
+  // Chapter Read / Unread Completion Helpers
+  function isChapterCompleted(ch) {
+    if (!ch) return false;
+    const name = typeof ch === "string" ? ch : (ch.name || ch.id);
+    if (!name) return false;
+    const base = name.replace(/\.(cbz|cbr|zip|tar)$/i, "");
+    if (currentSeriesUnread.has(name) || currentSeriesUnread.has(base)) return false;
+    if (currentSeriesCompleted.has(name) || currentSeriesCompleted.has(base)) return true;
+    if (currentSeriesProgressMap && (currentSeriesProgressMap.get(name) === 100 || currentSeriesProgressMap.get(base) === 100)) return true;
+    return false;
+  }
+
+  async function toggleChapterCompleted(seriesName, chapterName, completed) {
+    if (!seriesName || !chapterName) return;
+
+    if (completed) {
+      currentSeriesCompleted.add(chapterName);
+      currentSeriesUnread.delete(chapterName);
+    } else {
+      currentSeriesCompleted.delete(chapterName);
+      currentSeriesUnread.add(chapterName);
+    }
+
+    renderSeriesChaptersList();
+    updateResumeReadingButton();
+
+    try {
+      const completeEndpoint = isRemoteSeries(seriesName) ? "/api/remote/complete" : "/api/complete";
+      const res = await fetch(completeEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          series: seriesName,
+          chapter: chapterName,
+          completed: completed
+        })
+      });
+      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+      const data = await res.json();
+      if (data.success) {
+        if (Array.isArray(data.completed_chapters)) {
+          currentSeriesCompleted = new Set(data.completed_chapters);
+        }
+        if (Array.isArray(data.unread_chapters)) {
+          currentSeriesUnread = new Set(data.unread_chapters);
+        }
+        renderSeriesChaptersList();
+        updateResumeReadingButton();
+        showSuccess(completed ? `Marked "${chapterName}" as read` : `Marked "${chapterName}" as unread`);
+      }
+    } catch (err) {
+      if (completed) {
+        currentSeriesCompleted.delete(chapterName);
+        currentSeriesUnread.add(chapterName);
+      } else {
+        currentSeriesCompleted.add(chapterName);
+        currentSeriesUnread.delete(chapterName);
+      }
+      renderSeriesChaptersList();
+      updateResumeReadingButton();
+      showError(`Failed to update chapter state: ${err.message}`);
+    }
+  }
+
+  // Resume Reading Contextual Button State Machine
+  function updateResumeReadingButton() {
+    if (!btnResumeReading || !resumeReadingText) return;
+
+    if (!currentSeriesChapters || currentSeriesChapters.length === 0) {
+      btnResumeReading.disabled = true;
+      btnResumeReading.classList.add("hidden");
+      if (seriesCompletedBadge) seriesCompletedBadge.classList.add("hidden");
+      return;
+    }
+
+    btnResumeReading.disabled = false;
+    btnResumeReading.classList.remove("hidden");
+
+    const naturalCompare = (a, b) => (a.name || "").localeCompare(b.name || "", undefined, { numeric: true, sensitivity: "base" });
+    const isRemote = isRemoteSeries(currentSeries);
+    const canonicalChapters = isRemote
+      ? [...currentSeriesChapters]
+      : [...currentSeriesChapters].sort(naturalCompare);
+
+    const totalChapters = canonicalChapters.length;
+    const allCompleted = totalChapters > 0 && canonicalChapters.every((ch) => isChapterCompleted(ch));
+
+    const matchChapter = (ch, name) => {
+      if (!ch || !name) return false;
+      const chName = ch.name || ch.id;
+      if (chName === name) return true;
+      const stripExt = (s) => s.replace(/\.(cbz|cbr|zip|tar)$/i, "");
+      return stripExt(chName) === stripExt(name);
+    };
+
+    const hasChapterProgress = (ch) => {
+      if (!currentSeriesProgress) return false;
+      const chName = ch.name || ch.id;
+      if (currentSeriesProgress[chName]) return true;
+      const baseName = chName.replace(/\.(cbz|cbr|zip|tar)$/i, "");
+      return Boolean(currentSeriesProgress[baseName]);
+    };
+
+    // Identify the last-read chapter (the specific chapter visited most recently)
+    let lastReadingChapter = null;
+    if (currentSeriesLastRead) {
+      lastReadingChapter = canonicalChapters.find((ch) => matchChapter(ch, currentSeriesLastRead)) || null;
+    }
+    if (!lastReadingChapter) {
+      for (let i = canonicalChapters.length - 1; i >= 0; i--) {
+        const ch = canonicalChapters[i];
+        if (hasChapterProgress(ch)) {
+          lastReadingChapter = ch;
+          break;
+        }
+      }
+    }
+
+    // Case F: All chapters in the series have been read or marked as Read
+    if (allCompleted) {
+      if (seriesCompletedBadge) seriesCompletedBadge.classList.remove("hidden");
+      btnResumeReading.classList.remove("btn-primary");
+      btnResumeReading.classList.add("btn-secondary");
+      resumeReadingText.textContent = "Read Again";
+      const targetCh = lastReadingChapter || canonicalChapters[0];
+      btnResumeReading.title = `Read series again from ${targetCh.title || targetCh.name}`;
+      btnResumeReading.setAttribute("aria-label", `Read series again from ${targetCh.title || targetCh.name}`);
+      btnResumeReading.onclick = () => {
+        window.location.hash = `#/read/${encodeURIComponent(currentSeries)}/${encodeURIComponent(targetCh.name)}`;
+      };
+      return;
+    }
+
+    if (seriesCompletedBadge) seriesCompletedBadge.classList.add("hidden");
+    btnResumeReading.classList.remove("btn-secondary");
+    btnResumeReading.classList.add("btn-primary");
+
+    // Case A: No chapters have been read or opened
+    if (!lastReadingChapter) {
+      const targetCh = canonicalChapters.find((ch) => !isChapterCompleted(ch)) || canonicalChapters[0];
+      resumeReadingText.textContent = "Start Reading";
+      btnResumeReading.title = `Start reading ${targetCh.title || targetCh.name}`;
+      btnResumeReading.setAttribute("aria-label", `Start reading ${targetCh.title || targetCh.name}`);
+      btnResumeReading.onclick = () => {
+        window.location.hash = `#/read/${encodeURIComponent(currentSeries)}/${encodeURIComponent(targetCh.name)}`;
+      };
+      return;
+    }
+
+    // Reading in progress has occurred:
+    // Determine whether to resume at lastReadingChapter or advance to next unread chapter.
+    let targetCh = null;
+
+    if (!isChapterCompleted(lastReadingChapter)) {
+      // Case B: In middle of unread chapter.
+      // Case D: Saved progress exists, explicitly marked Unread.
+      // Case G: Series was finished, but user marked this chapter Unread.
+      targetCh = lastReadingChapter;
+    } else {
+      // The last reading chapter is completed.
+      const lastChName = lastReadingChapter.name || lastReadingChapter.id;
+      const baseName = lastChName.replace(/\.(cbz|cbr|zip|tar)$/i, "");
+      let progressPct = null;
+      if (currentSeriesProgressMap) {
+        if (currentSeriesProgressMap.has(lastChName)) {
+          progressPct = currentSeriesProgressMap.get(lastChName);
+        } else if (currentSeriesProgressMap.has(baseName)) {
+          progressPct = currentSeriesProgressMap.get(baseName);
+        }
+      }
+
+      if (progressPct != null && progressPct < 100) {
+        // Case C: Reader reached a specific page (< 100%), but chapter is marked Read.
+        // Resume at saved page within that chapter, preserving Read status.
+        targetCh = lastReadingChapter;
+      } else {
+        // Case E: Naturally completed final page;
+        // or Case G: Last reading chapter remains Read while another chapter is Unread.
+        // Resume at next unread chapter in canonical reading order.
+        const lastIdx = canonicalChapters.indexOf(lastReadingChapter);
+        let nextUnread = null;
+        for (let i = lastIdx + 1; i < canonicalChapters.length; i++) {
+          if (!isChapterCompleted(canonicalChapters[i])) {
+            nextUnread = canonicalChapters[i];
+            break;
+          }
+        }
+        if (!nextUnread) {
+          for (let i = 0; i < lastIdx; i++) {
+            if (!isChapterCompleted(canonicalChapters[i])) {
+              nextUnread = canonicalChapters[i];
+              break;
+            }
+          }
+        }
+        targetCh = nextUnread || lastReadingChapter;
+      }
+    }
+
+    resumeReadingText.textContent = "Resume Reading";
+    btnResumeReading.title = `Resume reading ${targetCh.title || targetCh.name}`;
+    btnResumeReading.setAttribute("aria-label", `Resume reading ${targetCh.title || targetCh.name}`);
+    btnResumeReading.onclick = () => {
+      window.location.hash = `#/read/${encodeURIComponent(currentSeries)}/${encodeURIComponent(targetCh.name)}`;
+    };
+  }
+
   // Helper to fetch reading progress info for a series in library view
   async function fetchSeriesProgressInfo(seriesName, totalChapters) {
     const fallbackTotal = typeof totalChapters === "number" ? totalChapters : 0;
     try {
       const readerData = await fetchReaderData(seriesName);
       const progress = readerData && readerData.progress ? readerData.progress : {};
+      const completedList = (readerData && Array.isArray(readerData.completed)) ? readerData.completed : [];
+      const unreadList = (readerData && Array.isArray(readerData.unread)) ? readerData.unread : [];
+      const completedSet = new Set(completedList);
+      const unreadSet = new Set(unreadList);
       const progressChapters = Object.keys(progress);
-      if (progressChapters.length === 0) {
+
+      if (progressChapters.length === 0 && completedList.length === 0) {
         return {
           hasProgress: false,
           readCount: 0,
-          unreadCount: fallbackTotal
+          unreadCount: fallbackTotal,
+          allCompleted: false
         };
       }
 
       // Fetch chapters list to respect natural reading order
       const chRes = await fetch(`/api/chapters?series=${encodeURIComponent(seriesName)}`);
       if (!chRes.ok) {
+        const readCount = completedList.length > 0 ? completedList.length : progressChapters.length;
         return {
-          hasProgress: false,
-          readCount: progressChapters.length,
-          unreadCount: Math.max(0, fallbackTotal - progressChapters.length)
+          hasProgress: readCount > 0,
+          readCount: readCount,
+          unreadCount: Math.max(0, fallbackTotal - readCount),
+          allCompleted: fallbackTotal > 0 && readCount >= fallbackTotal
         };
       }
       const chData = await chRes.json();
@@ -1505,12 +1786,16 @@ document.addEventListener("DOMContentLoaded", () => {
         return {
           hasProgress: false,
           readCount: 0,
-          unreadCount: 0
+          unreadCount: 0,
+          allCompleted: false
         };
       }
 
-      const matchedReadCount = chapters.filter((c) => Boolean(progress[c.name])).length;
-      const accurateUnreadCount = Math.max(0, chapters.length - matchedReadCount);
+      const isChapterDone = (ch) => {
+        if (unreadSet.has(ch.name)) return false;
+        if (completedSet.has(ch.name)) return true;
+        return false;
+      };
 
       // Find the latest chapter in natural reading order that exists in progress
       let activeChapter = null;
@@ -1526,10 +1811,10 @@ document.addEventListener("DOMContentLoaded", () => {
         activeChapter = chapters.find((c) => c.name === fallbackName) || { name: fallbackName, image_count: 0 };
       }
 
-      const savedImage = progress[activeChapter.name];
+      const savedImage = (activeChapter && progress[activeChapter.name]) ? progress[activeChapter.name] : null;
       let percentage = 0;
 
-      if (savedImage) {
+      if (savedImage && activeChapter) {
         try {
           const imgRes = await fetch(`/api/images?series=${encodeURIComponent(seriesName)}&chapter=${encodeURIComponent(activeChapter.name)}`);
           if (imgRes.ok) {
@@ -1546,18 +1831,28 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
 
+      const matchedReadCount = chapters.filter((c) => {
+        if (isChapterDone(c)) return true;
+        if (activeChapter && c.name === activeChapter.name && percentage === 100 && !unreadSet.has(c.name)) return true;
+        return false;
+      }).length;
+      const accurateUnreadCount = Math.max(0, chapters.length - matchedReadCount);
+      const allDone = chapters.length > 0 && matchedReadCount === chapters.length;
+
       return {
         hasProgress: true,
-        chapterName: activeChapter.name,
+        chapterName: activeChapter ? activeChapter.name : null,
         percentage: percentage,
         readCount: matchedReadCount,
-        unreadCount: accurateUnreadCount
+        unreadCount: accurateUnreadCount,
+        allCompleted: allDone
       };
     } catch {
       return {
         hasProgress: false,
         readCount: 0,
-        unreadCount: fallbackTotal
+        unreadCount: fallbackTotal,
+        allCompleted: false
       };
     }
   }
@@ -1619,6 +1914,8 @@ document.addEventListener("DOMContentLoaded", () => {
       if (data.library_exists === false) {
         allSeriesList = [];
         seriesGrid.innerHTML = "";
+        if (pinnedGrid) pinnedGrid.innerHTML = "";
+        if (pinnedSection) pinnedSection.classList.add("hidden");
         libraryEmpty.classList.add("hidden");
         if (libraryNoResults) libraryNoResults.classList.add("hidden");
         if (libraryUnavailable) {
@@ -1642,6 +1939,42 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       allSeriesList = data.series || [];
+      if (Array.isArray(data.pinned)) {
+        pinnedSeriesSet = new Set(data.pinned);
+      } else {
+        try {
+          const pinRes = await fetch("/api/pinned");
+          if (pinRes.ok) {
+            const pinData = await pinRes.json();
+            if (Array.isArray(pinData.pinned)) {
+              pinnedSeriesSet = new Set(pinData.pinned);
+            }
+          }
+        } catch {}
+      }
+
+      // Merge any pinned remote series that are not in local allSeriesList
+      for (const pinnedId of pinnedSeriesSet) {
+        if (!allSeriesList.some((s) => s.name === pinnedId)) {
+          const recentList = getRecentRemoteSeries();
+          const recentItem = recentList.find((item) => item && item.id === pinnedId);
+          const remoteTitle = (recentItem && recentItem.title && !recentItem.title.startsWith("remote:"))
+            ? recentItem.title
+            : pinnedId;
+          const remoteCard = {
+            name: pinnedId,
+            displayName: remoteTitle,
+            chapter_count: (recentItem && typeof recentItem.pageCount === "number")
+              ? recentItem.pageCount
+              : (recentItem && Array.isArray(recentItem.chapters) ? recentItem.chapters.length : 1),
+            has_cover: Boolean(recentItem && recentItem.cover_url),
+            cover_url: (recentItem && recentItem.cover_url) ? recentItem.cover_url : null,
+            isRemote: true
+          };
+          allSeriesList.push(remoteCard);
+        }
+      }
+
       allSeriesList.forEach((s) => {
         s.unreadCount = s.chapter_count || 0;
       });
@@ -1673,93 +2006,219 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Update a single series card in the library grid when its progress information resolves
+  // Update a series card across library grids when its progress information resolves
   function updateSeriesCardProgress(seriesName, prog) {
-    if (!seriesGrid) return;
-    const cards = seriesGrid.querySelectorAll(".series-card");
-    let targetCard = null;
-    for (const c of cards) {
-      if (c.dataset.seriesName === seriesName) {
-        targetCard = c;
-        break;
+    const cards = document.querySelectorAll(".series-card");
+    cards.forEach((targetCard) => {
+      if (targetCard.dataset.seriesName !== seriesName) return;
+
+      const coverWrapper = targetCard.querySelector(".series-cover-wrapper");
+      const content = targetCard.querySelector(".series-card-content");
+      if (!content) return;
+
+      if (prog && prog.hasProgress && prog.chapterName) {
+        const percent = typeof prog.percentage === "number" ? prog.percentage : 0;
+        const targetChapter = prog.chapterName;
+        const readUrl = `#/read/${encodeURIComponent(seriesName)}/${encodeURIComponent(targetChapter)}`;
+
+        // Update or add progress edge bar on cover
+        if (coverWrapper) {
+          let edge = coverWrapper.querySelector(".series-cover-progress");
+          if (!edge) {
+            edge = document.createElement("div");
+            edge.className = "series-cover-progress";
+            edge.setAttribute("aria-hidden", "true");
+            edge.innerHTML = `<div class="series-cover-progress-fill" style="width: ${percent}%;"></div>`;
+            coverWrapper.appendChild(edge);
+          } else {
+            const fill = edge.querySelector(".series-cover-progress-fill");
+            if (fill) fill.style.width = `${percent}%`;
+          }
+        }
+
+        // Update status text
+        let statusEl = content.querySelector(".series-card-status");
+        if (statusEl) {
+          statusEl.className = "series-card-status";
+          statusEl.textContent = targetChapter;
+        }
+
+        // Add or update continue link
+        let continueLink = content.querySelector(".series-card-continue");
+        if (!continueLink) {
+          continueLink = document.createElement("a");
+          continueLink.className = "series-card-continue";
+          continueLink.setAttribute("href", readUrl);
+          continueLink.setAttribute("title", `Continue reading ${targetChapter}`);
+          continueLink.innerHTML = `
+            <span class="continue-text">Continue reading</span>
+            <span class="continue-arrow" aria-hidden="true">→</span>
+          `;
+          continueLink.addEventListener("click", (e) => {
+            e.stopPropagation();
+            window.location.hash = continueLink.getAttribute("href");
+          });
+          content.appendChild(continueLink);
+        } else {
+          continueLink.setAttribute("href", readUrl);
+          continueLink.setAttribute("title", `Continue reading ${targetChapter}`);
+        }
+      } else {
+        let statusEl = content.querySelector(".series-card-status");
+        if (statusEl) {
+          statusEl.className = "series-card-status status-unstarted";
+          statusEl.textContent = "Not started";
+        }
+        const continueLink = content.querySelector(".series-card-continue");
+        if (continueLink) {
+          continueLink.remove();
+        }
+        if (coverWrapper) {
+          const edge = coverWrapper.querySelector(".series-cover-progress");
+          if (edge) edge.remove();
+        }
       }
-    }
-    if (!targetCard) return;
+    });
+  }
 
-    const coverWrapper = targetCard.querySelector(".series-cover-wrapper");
-    const content = targetCard.querySelector(".series-card-content");
-    if (!content) return;
+  function createSeriesCard(s, isPinned) {
+    const card = document.createElement("div");
+    card.className = "series-card";
+    card.dataset.seriesName = s.name;
+    card.setAttribute("role", "button");
+    card.setAttribute("tabindex", "0");
 
+    const displayName = s.displayName || s.name;
+    const countText = `${s.chapter_count} ${s.chapter_count === 1 ? "chapter" : "chapters"}`;
+    const prog = s.progressInfo;
+
+    let progressEdgeHtml = "";
+    let readingHtml = "";
     if (prog && prog.hasProgress && prog.chapterName) {
       const percent = typeof prog.percentage === "number" ? prog.percentage : 0;
       const targetChapter = prog.chapterName;
-      const readUrl = `#/read/${encodeURIComponent(seriesName)}/${encodeURIComponent(targetChapter)}`;
-
-      // Update or add progress edge bar on cover
-      if (coverWrapper) {
-        let edge = coverWrapper.querySelector(".series-cover-progress");
-        if (!edge) {
-          edge = document.createElement("div");
-          edge.className = "series-cover-progress";
-          edge.setAttribute("aria-hidden", "true");
-          edge.innerHTML = `<div class="series-cover-progress-fill" style="width: ${percent}%;"></div>`;
-          coverWrapper.appendChild(edge);
-        } else {
-          const fill = edge.querySelector(".series-cover-progress-fill");
-          if (fill) fill.style.width = `${percent}%`;
-        }
-      }
-
-      // Update status text
-      let statusEl = content.querySelector(".series-card-status");
-      if (statusEl) {
-        statusEl.className = "series-card-status";
-        statusEl.textContent = targetChapter;
-      }
-
-      // Add or update continue link
-      let continueLink = content.querySelector(".series-card-continue");
-      if (!continueLink) {
-        continueLink = document.createElement("a");
-        continueLink.className = "series-card-continue";
-        continueLink.setAttribute("href", readUrl);
-        continueLink.setAttribute("title", `Continue reading ${targetChapter}`);
-        continueLink.innerHTML = `
+      const readUrl = `#/read/${encodeURIComponent(s.name)}/${encodeURIComponent(targetChapter)}`;
+      progressEdgeHtml = `
+        <div class="series-cover-progress" aria-hidden="true">
+          <div class="series-cover-progress-fill" style="width: ${percent}%;"></div>
+        </div>
+      `;
+      readingHtml = `
+        <div class="series-card-status">${escapeHtml(targetChapter)}</div>
+        <a href="${readUrl}" class="series-card-continue" title="Continue reading ${escapeHtml(targetChapter)}">
           <span class="continue-text">Continue reading</span>
           <span class="continue-arrow" aria-hidden="true">→</span>
-        `;
-        continueLink.addEventListener("click", (e) => {
-          e.stopPropagation();
-          window.location.hash = continueLink.getAttribute("href");
-        });
-        content.appendChild(continueLink);
-      } else {
-        continueLink.setAttribute("href", readUrl);
-        continueLink.setAttribute("title", `Continue reading ${targetChapter}`);
-      }
+        </a>
+      `;
     } else {
-      let statusEl = content.querySelector(".series-card-status");
-      if (statusEl) {
-        statusEl.className = "series-card-status status-unstarted";
-        statusEl.textContent = "Not started";
-      }
-      const continueLink = content.querySelector(".series-card-continue");
-      if (continueLink) {
-        continueLink.remove();
-      }
-      if (coverWrapper) {
-        const edge = coverWrapper.querySelector(".series-cover-progress");
-        if (edge) edge.remove();
-      }
+      readingHtml = `
+        <div class="series-card-status status-unstarted">Not started</div>
+      `;
     }
+
+    const pinBtnHtml = `
+      <button type="button" class="btn-card-pin ${isPinned ? "pinned" : ""}" aria-label="${isPinned ? "Unpin manga" : "Pin manga"}" title="${isPinned ? "Unpin manga" : "Pin manga"}">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="12" y1="17" x2="12" y2="22"></line>
+          <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.89A2 2 0 0 1 15 10.77V6a3 3 0 0 0-6 0v4.77a2 2 0 0 1-1.11 1.79l-1.78.89A2 2 0 0 0 5 15.24Z"></path>
+        </svg>
+      </button>
+    `;
+
+    const coverHtml = s.has_cover && s.cover_url
+      ? `<div class="series-cover-wrapper">
+           <img class="series-cover-img" src="${s.cover_url}" alt="${escapeHtml(displayName)} cover" loading="lazy" />
+           ${pinBtnHtml}
+           ${progressEdgeHtml}
+         </div>`
+      : `<div class="series-cover-wrapper series-cover-placeholder">
+           <svg class="placeholder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+             <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+             <path d="M6 6h10"/>
+             <path d="M6 10h10"/>
+           </svg>
+           ${pinBtnHtml}
+           ${progressEdgeHtml}
+         </div>`;
+
+    card.innerHTML = `
+      ${coverHtml}
+      <div class="series-card-content">
+        <div class="series-card-title" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</div>
+        <div class="series-card-meta">${countText}</div>
+        ${readingHtml}
+      </div>
+    `;
+
+    // Handle image loading errors gracefully without broken image icon
+    const coverImg = card.querySelector(".series-cover-img");
+    if (coverImg) {
+      coverImg.addEventListener("error", () => {
+        const wrapper = card.querySelector(".series-cover-wrapper");
+        if (wrapper) {
+          wrapper.className = "series-cover-wrapper series-cover-placeholder";
+          const progEdge = wrapper.querySelector(".series-cover-progress");
+          const pinBtn = wrapper.querySelector(".btn-card-pin");
+          wrapper.innerHTML = `
+            <svg class="placeholder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+              <path d="M6 6h10"/>
+              <path d="M6 10h10"/>
+            </svg>
+          `;
+          if (pinBtn) wrapper.appendChild(pinBtn);
+          if (progEdge) wrapper.appendChild(progEdge);
+        }
+      });
+    }
+
+    const pinBtn = card.querySelector(".btn-card-pin");
+    if (pinBtn) {
+      pinBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        togglePinSeries(s.name);
+      });
+      pinBtn.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          e.stopPropagation();
+          togglePinSeries(s.name);
+        }
+      });
+    }
+
+    const continueLink = card.querySelector(".series-card-continue");
+    if (continueLink) {
+      continueLink.addEventListener("click", (e) => {
+        e.stopPropagation();
+        window.location.hash = continueLink.getAttribute("href");
+      });
+    }
+
+    card.addEventListener("click", (e) => {
+      if (e.target.closest(".series-card-continue") || e.target.closest(".btn-card-pin")) return;
+      window.location.hash = `#/series/${encodeURIComponent(s.name)}`;
+    });
+
+    card.addEventListener("keydown", (e) => {
+      if (e.target.closest(".series-card-continue") || e.target.closest(".btn-card-pin")) return;
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        window.location.hash = `#/series/${encodeURIComponent(s.name)}`;
+      }
+    });
+
+    return card;
   }
 
   function renderLibrarySeries() {
     seriesGrid.innerHTML = "";
+    if (pinnedGrid) pinnedGrid.innerHTML = "";
 
     if (allSeriesList.length === 0) {
       librarySubtitle.textContent = "0 series";
       libraryEmpty.classList.remove("hidden");
+      if (pinnedSection) pinnedSection.classList.add("hidden");
       if (libraryNoResults) libraryNoResults.classList.add("hidden");
       return;
     }
@@ -1770,7 +2229,10 @@ document.addEventListener("DOMContentLoaded", () => {
     let filtered = allSeriesList;
     const query = librarySearchQuery.trim().toLowerCase();
     if (query) {
-      filtered = allSeriesList.filter((s) => s.name.toLowerCase().includes(query));
+      filtered = allSeriesList.filter((s) => {
+        const title = (s.displayName || s.name).toLowerCase();
+        return title.includes(query) || s.name.toLowerCase().includes(query);
+      });
     }
 
     // Local sort
@@ -1786,7 +2248,9 @@ document.addEventListener("DOMContentLoaded", () => {
         cmp = aUnread - bUnread;
       } else {
         // "name"
-        cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+        const aTitle = a.displayName || a.name;
+        const bTitle = b.displayName || b.name;
+        cmp = aTitle.localeCompare(bTitle, undefined, { numeric: true, sensitivity: "base" });
       }
 
       if (librarySortDirection === "desc") {
@@ -1795,11 +2259,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Stable alphabetical fallback for ties
       if (cmp === 0 && librarySortCriterion !== "name") {
-        return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+        const aTitle = a.displayName || a.name;
+        const bTitle = b.displayName || b.name;
+        return aTitle.localeCompare(bTitle, undefined, { numeric: true, sensitivity: "base" });
       }
 
       return cmp;
     });
+
+    // Partition into pinned and unpinned lists
+    const pinnedList = filtered.filter((s) => pinnedSeriesSet.has(s.name));
+    const unpinnedList = filtered.filter((s) => !pinnedSeriesSet.has(s.name));
 
     // Update metadata subtitle: quiet, natural casing (e.g. "12 series")
     const totalCount = allSeriesList.length;
@@ -1811,6 +2281,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Show/hide no results state
     if (filtered.length === 0 && query) {
+      if (pinnedSection) pinnedSection.classList.add("hidden");
       if (libraryNoResults) {
         libraryNoResults.classList.remove("hidden");
         const querySpan = document.getElementById("no-results-query");
@@ -1849,108 +2320,24 @@ document.addEventListener("DOMContentLoaded", () => {
       if (existingPrompt) existingPrompt.remove();
     }
 
-    // Render series cards
-    filtered.forEach((s) => {
-      const card = document.createElement("div");
-      card.className = "series-card";
-      card.dataset.seriesName = s.name;
-      card.setAttribute("role", "button");
-      card.setAttribute("tabindex", "0");
-
-      const countText = `${s.chapter_count} ${s.chapter_count === 1 ? "chapter" : "chapters"}`;
-      const prog = s.progressInfo;
-
-      let progressEdgeHtml = "";
-      let readingHtml = "";
-      if (prog && prog.hasProgress && prog.chapterName) {
-        const percent = typeof prog.percentage === "number" ? prog.percentage : 0;
-        const targetChapter = prog.chapterName;
-        const readUrl = `#/read/${encodeURIComponent(s.name)}/${encodeURIComponent(targetChapter)}`;
-        progressEdgeHtml = `
-          <div class="series-cover-progress" aria-hidden="true">
-            <div class="series-cover-progress-fill" style="width: ${percent}%;"></div>
-          </div>
-        `;
-        readingHtml = `
-          <div class="series-card-status">${escapeHtml(targetChapter)}</div>
-          <a href="${readUrl}" class="series-card-continue" title="Continue reading ${escapeHtml(targetChapter)}">
-            <span class="continue-text">Continue reading</span>
-            <span class="continue-arrow" aria-hidden="true">→</span>
-          </a>
-        `;
-      } else {
-        readingHtml = `
-          <div class="series-card-status status-unstarted">Not started</div>
-        `;
-      }
-
-      const coverHtml = s.has_cover && s.cover_url
-        ? `<div class="series-cover-wrapper">
-             <img class="series-cover-img" src="${s.cover_url}" alt="${escapeHtml(s.name)} cover" loading="lazy" />
-             ${progressEdgeHtml}
-           </div>`
-        : `<div class="series-cover-wrapper series-cover-placeholder">
-             <svg class="placeholder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-               <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
-               <path d="M6 6h10"/>
-               <path d="M6 10h10"/>
-             </svg>
-             ${progressEdgeHtml}
-           </div>`;
-
-      card.innerHTML = `
-        ${coverHtml}
-        <div class="series-card-content">
-          <div class="series-card-title" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
-          <div class="series-card-meta">${countText}</div>
-          ${readingHtml}
-        </div>
-      `;
-
-      // Handle image loading errors gracefully without broken image icon
-      const coverImg = card.querySelector(".series-cover-img");
-      if (coverImg) {
-        coverImg.addEventListener("error", () => {
-          const wrapper = card.querySelector(".series-cover-wrapper");
-          if (wrapper) {
-            wrapper.className = "series-cover-wrapper series-cover-placeholder";
-            const progEdge = wrapper.querySelector(".series-cover-progress");
-            wrapper.innerHTML = `
-              <svg class="placeholder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
-                <path d="M6 6h10"/>
-                <path d="M6 10h10"/>
-              </svg>
-            `;
-            if (progEdge) {
-              wrapper.appendChild(progEdge);
-            }
-          }
-        });
-      }
-
-      const continueLink = card.querySelector(".series-card-continue");
-      if (continueLink) {
-        continueLink.addEventListener("click", (e) => {
-          e.stopPropagation();
-          window.location.hash = continueLink.getAttribute("href");
-        });
-      }
-
-      card.addEventListener("click", (e) => {
-        if (e.target.closest(".series-card-continue")) return;
-        window.location.hash = `#/series/${encodeURIComponent(s.name)}`;
-      });
-
-      card.addEventListener("keydown", (e) => {
-        if (e.target.closest(".series-card-continue")) return;
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          window.location.hash = `#/series/${encodeURIComponent(s.name)}`;
+    // Render pinned section
+    if (pinnedSection && pinnedGrid) {
+      if (pinnedList.length > 0) {
+        pinnedSection.classList.remove("hidden");
+        if (pinnedSectionCount) {
+          pinnedSectionCount.textContent = pinnedList.length;
         }
-      });
+        pinnedList.forEach((s) => {
+          pinnedGrid.appendChild(createSeriesCard(s, true));
+        });
+      } else {
+        pinnedSection.classList.add("hidden");
+      }
+    }
 
-      seriesGrid.appendChild(card);
+    // Render unpinned cards in normal series grid
+    unpinnedList.forEach((s) => {
+      seriesGrid.appendChild(createSeriesCard(s, false));
     });
   }
 
@@ -2354,6 +2741,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
       currentSeriesBookmarks = new Set(readerData.bookmarks || []);
       currentSeriesProgress = readerData.progress || {};
+      currentSeriesCompleted = new Set([...(readerData.completed || []), ...currentSeriesCompleted]);
+      currentSeriesUnread = new Set(readerData.unread || []);
+      for (const comp of currentSeriesCompleted) {
+        currentSeriesUnread.delete(comp);
+      }
+      currentSeriesLastRead = readerData.last_read || null;
 
       renderSeriesMetadata(readerData);
 
@@ -2373,6 +2766,8 @@ document.addEventListener("DOMContentLoaded", () => {
       if (chapters.length === 0) {
         seriesMeta.textContent = "0 chapters";
         chaptersEmpty.classList.remove("hidden");
+        updatePinButtons();
+        updateResumeReadingButton();
         return;
       }
 
@@ -2433,7 +2828,9 @@ document.addEventListener("DOMContentLoaded", () => {
       currentSeriesChapters = chapters;
       currentSeriesProgressMap = chapterProgressMap;
       updateChapterOrderUI();
+      updatePinButtons();
       renderSeriesChaptersList();
+      updateResumeReadingButton();
     } catch (err) {
       showError(`Failed to load chapters: ${err.message}`);
       seriesMeta.textContent = "Error loading chapters.";
@@ -2468,11 +2865,31 @@ document.addEventListener("DOMContentLoaded", () => {
       item.setAttribute("tabindex", "0");
 
       const isBookmarked = currentSeriesBookmarks.has(ch.name);
+      const isDone = isChapterCompleted(ch);
+      if (isDone) {
+        item.classList.add("chapter-completed");
+      }
+
       const hasProgress = currentSeriesProgressMap.has(ch.name);
       const progressPct = hasProgress ? currentSeriesProgressMap.get(ch.name) : null;
+      let progressText = "";
+      if (isDone) {
+        progressText = "Read";
+      } else if (hasProgress && progressPct != null) {
+        progressText = `${progressPct}%`;
+      }
+
       const pagesText = ch.image_count > 0
         ? `${ch.image_count} ${ch.image_count === 1 ? "page" : "pages"}`
         : (ch.date ? escapeHtml(ch.date) : "");
+
+      const readToggleBtnHtml = `
+        <button type="button" class="btn-chapter-read-toggle ${isDone ? "completed" : ""}" title="${isDone ? "Mark as Unread" : "Mark as Read"}" aria-label="${isDone ? "Mark " + escapeHtml(ch.title || ch.name) + " as unread" : "Mark " + escapeHtml(ch.title || ch.name) + " as read"}">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            ${isDone ? '<polyline points="20 6 9 17 4 12"></polyline>' : '<circle cx="12" cy="12" r="9"></circle>'}
+          </svg>
+        </button>
+      `;
 
       item.innerHTML = `
         <div class="chapter-info">
@@ -2484,8 +2901,9 @@ document.addEventListener("DOMContentLoaded", () => {
           <span class="chapter-title">${escapeHtml(ch.title || ch.name)}</span>
         </div>
         <div class="chapter-actions">
-          <span class="chapter-progress">${progressPct != null ? `${progressPct}%` : ""}</span>
+          <span class="chapter-progress">${progressText}</span>
           <span class="chapter-pages">${pagesText}</span>
+          ${readToggleBtnHtml}
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" class="chapter-arrow">
             <path d="M9 18l6-6-6-6"/>
           </svg>
@@ -2494,22 +2912,36 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Bookmark button click
       const bookmarkBtn = item.querySelector(".btn-chapter-bookmark");
-      bookmarkBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        const willBookmark = !currentSeriesBookmarks.has(ch.name);
-        const result = await toggleBookmark(currentSeries, ch.name, willBookmark);
-        if (result) {
-          loadChapters(currentSeries);
-        }
-      });
+      if (bookmarkBtn) {
+        bookmarkBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const willBookmark = !currentSeriesBookmarks.has(ch.name);
+          const result = await toggleBookmark(currentSeries, ch.name, willBookmark);
+          if (result) {
+            loadChapters(currentSeries);
+          }
+        });
+      }
+
+      // Read/Unread button click
+      const readToggleBtn = item.querySelector(".btn-chapter-read-toggle");
+      if (readToggleBtn) {
+        readToggleBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const targetStatus = !isDone;
+          await toggleChapterCompleted(currentSeries, ch.name, targetStatus);
+        });
+      }
 
       // Row click navigates to chapter reader
-      item.addEventListener("click", () => {
+      item.addEventListener("click", (e) => {
+        if (e.target.closest(".btn-chapter-bookmark") || e.target.closest(".btn-chapter-read-toggle")) return;
         window.location.hash = `#/read/${encodeURIComponent(currentSeries)}/${encodeURIComponent(ch.name)}`;
       });
 
       // Keyboard navigation (Enter or Space)
       item.addEventListener("keydown", (e) => {
+        if (e.target.closest(".btn-chapter-bookmark") || e.target.closest(".btn-chapter-read-toggle")) return;
         if ((e.key === "Enter" || e.key === " ") && e.target === item) {
           e.preventDefault();
           window.location.hash = `#/read/${encodeURIComponent(currentSeries)}/${encodeURIComponent(ch.name)}`;
@@ -2533,6 +2965,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (readerProgressContainer) readerProgressContainer.classList.add("hidden");
     if (readerEmpty) readerEmpty.classList.add("hidden");
     readerLoading.classList.remove("hidden");
+    let hasTriggeredAutoComplete = false;
 
     // Clear previous observer and pending saves
     if (readerObserver) {
@@ -2572,6 +3005,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
       currentSeriesBookmarks = new Set(readerData.bookmarks || []);
       currentSeriesProgress = readerData.progress || {};
+      currentSeriesCompleted = new Set(readerData.completed || []);
+      currentSeriesUnread = new Set(readerData.unread || []);
+      currentSeriesLastRead = readerData.last_read || chapterName;
 
       // Apply saved series reading style preference (defaults to spaced)
       const savedStyle = (readerData.reader && (readerData.reader.style === "seamless" || readerData.reader.style === "spaced"))
@@ -2675,6 +3111,56 @@ document.addEventListener("DOMContentLoaded", () => {
 
       updateReaderProgress(initialPageIndex);
 
+      // If the saved page being restored is the final page, merely opening/restoring the saved position
+      // must NOT count as newly completing the chapter. Active reading navigation must trigger it.
+      const isRestoringFinalPage = (targetPage !== null && initialPageIndex === images.length && images.length > 0);
+      let canAutoComplete = !isRestoringFinalPage;
+
+      function completeCurrentChapter() {
+        if (!canAutoComplete || hasTriggeredAutoComplete) return;
+        hasTriggeredAutoComplete = true;
+        const chBase = chapterName.replace(/\.(cbz|cbr|zip|tar)$/i, "");
+        const isAlreadyCompleted = currentSeriesCompleted.has(chapterName) || currentSeriesCompleted.has(chBase);
+        const isExplicitUnread = currentSeriesUnread.has(chapterName) || currentSeriesUnread.has(chBase);
+
+        if (!isAlreadyCompleted || isExplicitUnread) {
+          // Immediately update in-memory state consistently
+          currentSeriesCompleted.add(chapterName);
+          currentSeriesCompleted.add(chBase);
+          currentSeriesUnread.delete(chapterName);
+          currentSeriesUnread.delete(chBase);
+          if (currentSeriesProgressMap) {
+            currentSeriesProgressMap.set(chapterName, 100);
+            currentSeriesProgressMap.set(chBase, 100);
+          }
+
+          // Persist the completed status and clear the conflicting unread override
+          const completeEndpoint = isRemoteSeries(seriesName) ? "/api/remote/complete" : "/api/complete";
+          fetch(completeEndpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              series: seriesName,
+              chapter: chapterName,
+              completed: true
+            })
+          }).then((r) => r.ok ? r.json() : null).then((data) => {
+            if (data && data.success) {
+              if (Array.isArray(data.completed_chapters)) {
+                currentSeriesCompleted = new Set(data.completed_chapters);
+              }
+              if (Array.isArray(data.unread_chapters)) {
+                currentSeriesUnread = new Set(data.unread_chapters);
+              }
+            }
+          }).catch((err) => {
+            console.warn("Failed to persist chapter completion:", err);
+          });
+        }
+      }
+
+      activeReaderComplete = completeCurrentChapter;
+
       if (targetPage) {
         currentVisibleImage = savedImage;
         isInitialResume = true;
@@ -2724,10 +3210,21 @@ document.addEventListener("DOMContentLoaded", () => {
           if (filename && filenameToIndex.has(filename)) {
             const activeIndex = filenameToIndex.get(filename);
             updateReaderProgress(activeIndex);
+
+            // Visiting or scrolling to earlier pages enables completion upon returning to the final page
+            if (activeIndex < images.length) {
+              canAutoComplete = true;
+            }
+
+            // Auto-complete chapter when reader reaches the final page during active reading
+            if (activeIndex === images.length && images.length > 0) {
+              completeCurrentChapter();
+            }
           }
 
           if (filename && filename !== currentVisibleImage) {
             currentVisibleImage = filename;
+            currentSeriesLastRead = chapterName;
 
             // Debounced save (~750ms after scrolling settles)
             clearTimeout(saveProgressTimeout);
@@ -2740,6 +3237,10 @@ document.addEventListener("DOMContentLoaded", () => {
                   chapter: chapterName,
                   image: filename
                 })
+              }).then((r) => r.ok ? r.json() : null).then((data) => {
+                if (data && data.last_read) {
+                  currentSeriesLastRead = data.last_read;
+                }
               }).catch((err) => {
                 console.warn("Failed to persist reading progress:", err);
               });
@@ -2885,7 +3386,12 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   btnReaderBack.addEventListener("click", navigateBackToChapters);
-  btnReaderBottomBack.addEventListener("click", navigateBackToChapters);
+  btnReaderBottomBack.addEventListener("click", () => {
+    if (typeof activeReaderComplete === "function") {
+      activeReaderComplete();
+    }
+    navigateBackToChapters();
+  });
 
   // Reader Prev / Next Buttons
   if (btnReaderPrev) {
@@ -2898,7 +3404,12 @@ document.addEventListener("DOMContentLoaded", () => {
     btnReaderNext.addEventListener("click", () => navigateToChapter(currentNextChapter));
   }
   if (btnReaderFooterNext) {
-    btnReaderFooterNext.addEventListener("click", () => navigateToChapter(currentNextChapter));
+    btnReaderFooterNext.addEventListener("click", () => {
+      if (typeof activeReaderComplete === "function") {
+        activeReaderComplete();
+      }
+      navigateToChapter(currentNextChapter);
+    });
   }
 
   // Reader Bookmark Toggle Button in Header
@@ -2959,6 +3470,15 @@ document.addEventListener("DOMContentLoaded", () => {
       btnReaderBookmark.click();
     }
   });
+
+  // Series Action Bar Event Listeners
+  if (btnPinSeries) {
+    btnPinSeries.addEventListener("click", () => {
+      if (currentSeries) {
+        togglePinSeries(currentSeries);
+      }
+    });
+  }
 
   // Metadata Editor Event Listeners
   if (btnEditMetadata) {

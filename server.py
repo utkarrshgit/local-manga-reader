@@ -229,8 +229,8 @@ def load_app_settings() -> dict:
     return result
 
 
-def save_app_settings(theme: str | None = None, library_path: str | None = None) -> dict:
-    """Saves application settings (theme, library_path) to settings.json."""
+def save_app_settings(theme: str | None = None, library_path: str | None = None, pinned: list[str] | None = None) -> dict:
+    """Saves application settings (theme, library_path, pinned series) to settings.json."""
     settings_file = get_settings_file_path()
     config_dir = settings_file.parent
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -250,8 +250,19 @@ def save_app_settings(theme: str | None = None, library_path: str | None = None)
     elif "library_path" in current and current["library_path"]:
         payload["library_path"] = current["library_path"]
 
+    if pinned is not None:
+        cleaned_pinned = []
+        for p in pinned:
+            if isinstance(p, str) and p.strip():
+                clean_p = p.strip()
+                if clean_p not in cleaned_pinned:
+                    cleaned_pinned.append(clean_p)
+        payload["pinned"] = cleaned_pinned
+    elif "pinned" in current and isinstance(current["pinned"], list):
+        payload["pinned"] = current["pinned"]
+
     for k, v in current.items():
-        if k not in ("appearance", "theme", "library_path"):
+        if k not in ("appearance", "theme", "library_path", "pinned"):
             payload[k] = v
 
     temp_settings = config_dir / f"{settings_file.name}.tmp"
@@ -267,6 +278,51 @@ def save_app_settings(theme: str | None = None, library_path: str | None = None)
         raise
 
     return load_app_settings()
+
+
+def load_pinned_series() -> list[str]:
+    """Loads list of pinned series identifiers from settings.json."""
+    settings = load_app_settings()
+    pinned = settings.get("pinned", [])
+    if isinstance(pinned, list):
+        clean_pinned = []
+        for s in pinned:
+            if isinstance(s, str) and s.strip() and s.strip() not in clean_pinned:
+                clean_pinned.append(s.strip())
+        return clean_pinned
+    return []
+
+
+def save_pinned_series(pinned_list: list[str]) -> list[str]:
+    """Saves list of pinned series identifiers to settings.json."""
+    clean_pinned: list[str] = []
+    for item in pinned_list:
+        if isinstance(item, str) and item.strip():
+            s = item.strip()
+            if s not in clean_pinned:
+                clean_pinned.append(s)
+    save_app_settings(pinned=clean_pinned)
+    return clean_pinned
+
+
+def toggle_pin_series(series_name: str, pinned: bool | None = None) -> tuple[bool, list[str]]:
+    """Toggles or sets the pinned state for a series. Returns (is_pinned, updated_pinned_list)."""
+    current = load_pinned_series()
+    name = series_name.strip()
+    is_currently_pinned = name in current
+
+    if pinned is None:
+        should_pin = not is_currently_pinned
+    else:
+        should_pin = bool(pinned)
+
+    if should_pin and not is_currently_pinned:
+        current.append(name)
+    elif not should_pin and is_currently_pinned:
+        current = [s for s in current if s != name]
+
+    save_pinned_series(current)
+    return should_pin, current
 
 
 def save_library_path_config(path_str: str) -> None:
@@ -486,6 +542,7 @@ class MangaLibrary:
 
     def __init__(self, root_path: str | Path | None = None):
         self.root_path = Path(root_path).expanduser().resolve() if root_path else None
+        self._lock = threading.RLock()
 
     def exists(self) -> bool:
         return bool(self.root_path and self.root_path.exists() and self.root_path.is_dir())
@@ -995,6 +1052,14 @@ class MangaLibrary:
             if not isinstance(bookmarks, list):
                 bookmarks = []
 
+            completed = data.get("completed")
+            if not isinstance(completed, list):
+                completed = []
+
+            unread = data.get("unread")
+            if not isinstance(unread, list):
+                unread = []
+
             reader_meta = data.get("reader")
             style = "spaced"
             if isinstance(reader_meta, dict):
@@ -1002,7 +1067,7 @@ class MangaLibrary:
                 if raw_style in ("spaced", "seamless"):
                     style = raw_style
 
-            # Normalize progress and bookmarks so both display names and archive filenames work seamlessly
+            # Normalize progress, bookmarks, completed, and unread so both display names and archive filenames work seamlessly
             normalized_progress = {}
             for k, v in progress.items():
                 if isinstance(k, str) and isinstance(v, str):
@@ -1023,6 +1088,26 @@ class MangaLibrary:
                         elif (series_dir / f"{b}{ext}").is_file():
                             normalized_bookmarks.add(f"{b}{ext}")
 
+            normalized_completed = set()
+            for c in completed:
+                if isinstance(c, str):
+                    normalized_completed.add(c)
+                    for ext in ARCHIVE_EXTENSIONS:
+                        if c.lower().endswith(ext):
+                            normalized_completed.add(c[:-len(ext)])
+                        elif (series_dir / f"{c}{ext}").is_file():
+                            normalized_completed.add(f"{c}{ext}")
+
+            normalized_unread = set()
+            for u in unread:
+                if isinstance(u, str):
+                    normalized_unread.add(u)
+                    for ext in ARCHIVE_EXTENSIONS:
+                        if u.lower().endswith(ext):
+                            normalized_unread.add(u[:-len(ext)])
+                        elif (series_dir / f"{u}{ext}").is_file():
+                            normalized_unread.add(f"{u}{ext}")
+
             result = {
                 "progress": normalized_progress,
                 "bookmarks": sorted(list(normalized_bookmarks), key=natural_sort_key),
@@ -1030,6 +1115,12 @@ class MangaLibrary:
                     "style": style
                 }
             }
+            if normalized_completed:
+                result["completed"] = sorted(list(normalized_completed), key=natural_sort_key)
+            if normalized_unread:
+                result["unread"] = sorted(list(normalized_unread), key=natural_sort_key)
+            if isinstance(data.get("last_read"), str):
+                result["last_read"] = data["last_read"]
             if isinstance(data.get("summary"), str):
                 result["summary"] = data["summary"]
             if isinstance(data.get("author"), str):
@@ -1073,6 +1164,12 @@ class MangaLibrary:
                 "style": style
             }
         }
+        if data.get("completed"):
+            clean_data["completed"] = data["completed"]
+        if data.get("unread"):
+            clean_data["unread"] = data["unread"]
+        if "last_read" in data and isinstance(data["last_read"], str):
+            clean_data["last_read"] = data["last_read"]
         if "summary" in data and isinstance(data["summary"], str):
             clean_data["summary"] = data["summary"]
         if "author" in data and isinstance(data["author"], str):
@@ -1084,17 +1181,18 @@ class MangaLibrary:
                     clean_links[k] = v
             clean_data["links"] = clean_links
 
-        try:
-            temp_file.write_text(json.dumps(clean_data, indent=2), encoding="utf-8")
-            temp_file.replace(reader_file)
-            return True
-        except Exception:
-            if temp_file.exists():
-                try:
-                    temp_file.unlink()
-                except OSError:
-                    pass
-            return False
+        with self._lock:
+            try:
+                temp_file.write_text(json.dumps(clean_data, indent=2), encoding="utf-8")
+                temp_file.replace(reader_file)
+                return True
+            except Exception:
+                if temp_file.exists():
+                    try:
+                        temp_file.unlink()
+                    except OSError:
+                        pass
+                return False
 
     def update_metadata(self, series_name: str, summary: str | None = None, author: str | None = None, links: dict | None = None) -> dict | None:
         """
@@ -1172,20 +1270,22 @@ class MangaLibrary:
         if not image_name or "/" in image_name or "\\" in image_name or ".." in image_name:
             return None
 
-        data = self.get_reader_data(series_name)
-        if data is None:
+        with self._lock:
+            data = self.get_reader_data(series_name)
+            if data is None:
+                return None
+
+            data["last_read"] = chapter_name
+            data["progress"][chapter_name] = image_name
+            for ext in ARCHIVE_EXTENSIONS:
+                if chapter_name.lower().endswith(ext):
+                    data["progress"][chapter_name[:-len(ext)]] = image_name
+                elif (series_dir / f"{chapter_name}{ext}").is_file():
+                    data["progress"][f"{chapter_name}{ext}"] = image_name
+
+            if self.save_reader_data(series_name, data):
+                return data
             return None
-
-        data["progress"][chapter_name] = image_name
-        for ext in ARCHIVE_EXTENSIONS:
-            if chapter_name.lower().endswith(ext):
-                data["progress"][chapter_name[:-len(ext)]] = image_name
-            elif (series_dir / f"{chapter_name}{ext}").is_file():
-                data["progress"][f"{chapter_name}{ext}"] = image_name
-
-        if self.save_reader_data(series_name, data):
-            return data
-        return None
 
     def toggle_bookmark(self, series_name: str, chapter_name: str, bookmarked: bool | None = None) -> dict | None:
         """
@@ -1199,33 +1299,78 @@ class MangaLibrary:
         if not chapter_path:
             return None
 
-        data = self.get_reader_data(series_name)
-        if data is None:
+        with self._lock:
+            data = self.get_reader_data(series_name)
+            if data is None:
+                return None
+
+            bookmarks = set(data.get("bookmarks", []))
+            names_to_modify = {chapter_name}
+            for ext in ARCHIVE_EXTENSIONS:
+                if chapter_name.lower().endswith(ext):
+                    names_to_modify.add(chapter_name[:-len(ext)])
+                elif (series_dir / f"{chapter_name}{ext}").is_file():
+                    names_to_modify.add(f"{chapter_name}{ext}")
+
+            if bookmarked is None:
+                is_currently_bookmarked = any(n in bookmarks for n in names_to_modify)
+                if is_currently_bookmarked:
+                    bookmarks.difference_update(names_to_modify)
+                else:
+                    bookmarks.update(names_to_modify)
+            elif bookmarked:
+                bookmarks.update(names_to_modify)
+            else:
+                bookmarks.difference_update(names_to_modify)
+
+            data["bookmarks"] = sorted(list(bookmarks), key=natural_sort_key)
+            if self.save_reader_data(series_name, data):
+                return data
             return None
 
-        bookmarks = set(data.get("bookmarks", []))
-        names_to_modify = {chapter_name}
-        for ext in ARCHIVE_EXTENSIONS:
-            if chapter_name.lower().endswith(ext):
-                names_to_modify.add(chapter_name[:-len(ext)])
-            elif (series_dir / f"{chapter_name}{ext}").is_file():
-                names_to_modify.add(f"{chapter_name}{ext}")
+    def set_chapter_completion(self, series_name: str, chapter_name: str, completed: bool) -> dict | None:
+        """
+        Marks a chapter as completed (True) or unread (False).
+        Does NOT alter the saved reading position in progress.
+        """
+        if not self.root_path:
+            return None
+        series_dir = self.root_path / series_name
+        if not self._is_safe_child(series_dir) or not series_dir.is_dir():
+            return None
 
-        if bookmarked is None:
-            is_currently_bookmarked = any(n in bookmarks for n in names_to_modify)
-            if is_currently_bookmarked:
-                bookmarks.difference_update(names_to_modify)
+        chapter_path = self._resolve_chapter_path(series_name, chapter_name)
+        if not chapter_path:
+            return None
+
+        with self._lock:
+            data = self.get_reader_data(series_name)
+            if data is None:
+                return None
+
+            completed_set = set(data.get("completed", []))
+            unread_set = set(data.get("unread", []))
+
+            names_to_modify = {chapter_name}
+            for ext in ARCHIVE_EXTENSIONS:
+                if chapter_name.lower().endswith(ext):
+                    names_to_modify.add(chapter_name[:-len(ext)])
+                elif (series_dir / f"{chapter_name}{ext}").is_file():
+                    names_to_modify.add(f"{chapter_name}{ext}")
+
+            if completed:
+                completed_set.update(names_to_modify)
+                unread_set.difference_update(names_to_modify)
             else:
-                bookmarks.update(names_to_modify)
-        elif bookmarked:
-            bookmarks.update(names_to_modify)
-        else:
-            bookmarks.difference_update(names_to_modify)
+                completed_set.difference_update(names_to_modify)
+                unread_set.update(names_to_modify)
 
-        data["bookmarks"] = sorted(list(bookmarks), key=natural_sort_key)
-        if self.save_reader_data(series_name, data):
-            return data
-        return None
+            data["completed"] = sorted(list(completed_set), key=natural_sort_key)
+            data["unread"] = sorted(list(unread_set), key=natural_sort_key)
+
+            if self.save_reader_data(series_name, data):
+                return data
+            return None
 
 
 class MangaRequestHandler(BaseHTTPRequestHandler):
@@ -1474,6 +1619,11 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 self._send_error(str(e), HTTPStatus.BAD_REQUEST)
             return
 
+        # API: Get pinned series list (/api/pin, /api/pinned)
+        if path in ("/api/pin", "/api/pinned"):
+            self._send_json({"pinned": load_pinned_series()})
+            return
+
         # 1. API: List all series
         if path == "/api/series":
             series = self.library.list_series()
@@ -1481,7 +1631,8 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 "library_path": str(self.library.root_path) if self.library.root_path else None,
                 "library_exists": self.library.exists(),
                 "series_count": len(series),
-                "series": series
+                "series": series,
+                "pinned": load_pinned_series()
             })
             return
 
@@ -1823,7 +1974,7 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 self._send_error(f"Series not found or invalid: {series_name}", HTTPStatus.NOT_FOUND)
                 return
 
-            self._send_json({
+            resp_dict = {
                 "series": series_name,
                 "summary": data.get("summary", ""),
                 "author": data.get("author", ""),
@@ -1832,8 +1983,13 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 "has_background": self.library.has_background_file(series_name),
                 "progress": data["progress"],
                 "bookmarks": data["bookmarks"],
+                "completed": data.get("completed", []),
+                "unread": data.get("unread", []),
                 "reader": data["reader"]
-            })
+            }
+            if "last_read" in data and isinstance(data["last_read"], str):
+                resp_dict["last_read"] = data["last_read"]
+            self._send_json(resp_dict)
             return
 
         # 7. Static Assets (index.html, style.css, app.js)
@@ -1994,17 +2150,124 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
         # 0c. API: Update application settings (/api/settings)
         if path == "/api/settings":
             body = self._read_json_body()
-            if body is None:
+            if body is None or not isinstance(body, dict):
                 self._send_error("Invalid or missing JSON body", HTTPStatus.BAD_REQUEST)
                 return
 
+            has_valid_key = False
             theme = body.get("theme")
-            if theme is None or theme not in ("crimson", "kuromi"):
-                self._send_error("Invalid or missing theme value. Allowed: 'crimson', 'kuromi'", HTTPStatus.BAD_REQUEST)
+            pinned = body.get("pinned")
+
+            if "theme" in body:
+                if theme is None or theme not in ("crimson", "kuromi"):
+                    self._send_error("Invalid or missing theme value. Allowed: 'crimson', 'kuromi'", HTTPStatus.BAD_REQUEST)
+                    return
+                has_valid_key = True
+
+            if "pinned" in body:
+                if not isinstance(pinned, list):
+                    self._send_error("Invalid 'pinned' value. Must be a list of strings", HTTPStatus.BAD_REQUEST)
+                    return
+                has_valid_key = True
+
+            if not has_valid_key:
+                self._send_error("Invalid or missing settings", HTTPStatus.BAD_REQUEST)
                 return
 
-            updated = save_app_settings(theme=theme)
+            updated = save_app_settings(theme=theme, pinned=pinned)
             self._send_json({"success": True, **updated})
+            return
+
+        # API: Pin/Unpin Series (/api/pin)
+        if path == "/api/pin":
+            body = self._read_json_body()
+            if not body or not isinstance(body, dict):
+                self._send_error("Invalid or missing JSON body", HTTPStatus.BAD_REQUEST)
+                return
+
+            series = body.get("series")
+            if not series or not isinstance(series, str) or not series.strip():
+                self._send_error("Missing or invalid 'series' field", HTTPStatus.BAD_REQUEST)
+                return
+
+            series = series.strip()
+            pinned_val = body.get("pinned")
+            if pinned_val is not None and not isinstance(pinned_val, bool):
+                self._send_error("Field 'pinned' must be a boolean", HTTPStatus.BAD_REQUEST)
+                return
+
+            is_pinned, pinned_list = toggle_pin_series(series, pinned_val)
+            self._send_json({
+                "success": True,
+                "series": series,
+                "pinned": is_pinned,
+                "pinned_series": pinned_list
+            })
+            return
+
+        # API: Mark Chapter as Read / Unread (/api/complete, /api/remote/complete)
+        if path in ("/api/complete", "/api/remote/complete"):
+            body = self._read_json_body()
+            if not body or not isinstance(body, dict):
+                self._send_error("Invalid or missing JSON body", HTTPStatus.BAD_REQUEST)
+                return
+
+            series = body.get("series")
+            chapter = body.get("chapter")
+            if "completed" in body and not isinstance(body["completed"], bool):
+                self._send_error("Field 'completed' must be a boolean", HTTPStatus.BAD_REQUEST)
+                return
+            completed_val = body.get("completed", True)
+
+            if not series or not chapter or not isinstance(series, str) or not isinstance(chapter, str):
+                self._send_error("Missing required fields: 'series', 'chapter'", HTTPStatus.BAD_REQUEST)
+                return
+
+            series = series.strip()
+            chapter = chapter.strip()
+
+            if path == "/api/remote/complete" and not is_remote_series(series):
+                self._send_error("Series identifier must be a remote series", HTTPStatus.BAD_REQUEST)
+                return
+
+            if is_remote_series(series):
+                try:
+                    data = self.remote_service.set_chapter_completion(series, chapter, completed_val)
+                    self._send_json({
+                        "success": True,
+                        "series": series,
+                        "chapter": chapter,
+                        "completed": completed_val,
+                        "progress": data["progress"],
+                        "bookmarks": data["bookmarks"],
+                        "completed_chapters": data.get("completed", []),
+                        "unread_chapters": data.get("unread", []),
+                        "reader": data["reader"]
+                    })
+                except Exception as e:
+                    self._send_error(str(e), HTTPStatus.BAD_REQUEST)
+                return
+
+            if not self.library.root_path or not (self.library.root_path / series).is_dir():
+                self._send_error(f"Series '{series}' not found", HTTPStatus.NOT_FOUND)
+                return
+
+            data = self.library.set_chapter_completion(series, chapter, completed_val)
+            if data is None:
+                self._send_error("Invalid chapter name", HTTPStatus.BAD_REQUEST)
+                return
+
+            self._send_json({
+                "success": True,
+                "series": series,
+                "chapter": chapter,
+                "completed": completed_val,
+                "progress": data["progress"],
+                "bookmarks": data["bookmarks"],
+                "completed_chapters": data.get("completed", []),
+                "unread_chapters": data.get("unread", []),
+                "reader": data["reader"]
+            })
             return
 
         # 0d. Remote Provider POST Endpoints
@@ -2085,6 +2348,7 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                         "chapter": chapter,
                         "progress": data["progress"],
                         "bookmarks": data["bookmarks"],
+                        "last_read": data.get("last_read"),
                         "reader": data["reader"]
                     })
                 except Exception as e:
@@ -2102,6 +2366,7 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 "chapter": chapter,
                 "progress": data["progress"],
                 "bookmarks": data["bookmarks"],
+                "last_read": data.get("last_read"),
                 "reader": data["reader"]
             })
             return

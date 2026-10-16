@@ -439,7 +439,7 @@ class RemoteReaderService:
         if style not in ("spaced", "seamless"):
             style = "spaced"
 
-        return {
+        res = {
             "series": series_identifier,
             "title": series.title,
             "summary": series.description or "",
@@ -450,8 +450,13 @@ class RemoteReaderService:
             "has_background": has_bg,
             "progress": dict(state_entry.get("progress", {})),
             "bookmarks": list(state_entry.get("bookmarks", [])),
+            "completed": list(state_entry.get("completed", [])),
+            "unread": list(state_entry.get("unread", [])),
             "reader": {"style": style},
         }
+        if "last_read" in state_entry and isinstance(state_entry["last_read"], str):
+            res["last_read"] = state_entry["last_read"]
+        return res
 
     def update_progress(
         self, series_identifier: str, chapter_id: str, image_name: str
@@ -465,12 +470,19 @@ class RemoteReaderService:
         key = self._normalize_series_key(series_identifier)
         with self._lock:
             if key not in self._state:
-                self._state[key] = {"progress": {}, "bookmarks": [], "reader": {"style": "spaced"}}
+                self._state[key] = {
+                    "progress": {},
+                    "bookmarks": [],
+                    "completed": [],
+                    "unread": [],
+                    "reader": {"style": "spaced"},
+                }
 
             entry = self._state[key]
             if "progress" not in entry or not isinstance(entry["progress"], dict):
                 entry["progress"] = {}
             entry["progress"][chapter_id.strip()] = image_name.strip()
+            entry["last_read"] = chapter_id.strip()
             self._save_state()
 
         return self.get_reader_data(series_identifier)
@@ -489,7 +501,13 @@ class RemoteReaderService:
 
         with self._lock:
             if key not in self._state:
-                self._state[key] = {"progress": {}, "bookmarks": [], "reader": {"style": "spaced"}}
+                self._state[key] = {
+                    "progress": {},
+                    "bookmarks": [],
+                    "completed": [],
+                    "unread": [],
+                    "reader": {"style": "spaced"},
+                }
 
             entry = self._state[key]
             bookmarks = set(entry.get("bookmarks", []))
@@ -509,6 +527,46 @@ class RemoteReaderService:
 
         return self.get_reader_data(series_identifier)
 
+    def set_chapter_completion(
+        self, series_identifier: str, chapter_id: str, completed: bool
+    ) -> Dict[str, Any]:
+        """
+        Mark a remote chapter as completed (True) or unread (False).
+        Does NOT alter saved reading progress.
+        """
+        if not chapter_id:
+            raise ValueError("Chapter ID is required.")
+
+        key = self._normalize_series_key(series_identifier)
+        ch = chapter_id.strip()
+
+        with self._lock:
+            if key not in self._state:
+                self._state[key] = {
+                    "progress": {},
+                    "bookmarks": [],
+                    "completed": [],
+                    "unread": [],
+                    "reader": {"style": "spaced"},
+                }
+
+            entry = self._state[key]
+            completed_set = set(entry.get("completed", []))
+            unread_set = set(entry.get("unread", []))
+
+            if completed:
+                completed_set.add(ch)
+                unread_set.discard(ch)
+            else:
+                completed_set.discard(ch)
+                unread_set.add(ch)
+
+            entry["completed"] = sorted(list(completed_set))
+            entry["unread"] = sorted(list(unread_set))
+            self._save_state()
+
+        return self.get_reader_data(series_identifier)
+
     def update_reader_style(self, series_identifier: str, style: str) -> Dict[str, Any]:
         """
         Update reading style preference ('spaced' or 'seamless') for a remote series.
@@ -519,7 +577,13 @@ class RemoteReaderService:
         key = self._normalize_series_key(series_identifier)
         with self._lock:
             if key not in self._state:
-                self._state[key] = {"progress": {}, "bookmarks": [], "reader": {"style": "spaced"}}
+                self._state[key] = {
+                    "progress": {},
+                    "bookmarks": [],
+                    "completed": [],
+                    "unread": [],
+                    "reader": {"style": "spaced"},
+                }
 
             entry = self._state[key]
             entry["reader"] = {"style": style}

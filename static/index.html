@@ -131,6 +131,23 @@
         </div>
       </div>
 
+      <!-- Dedicated Pinned Section (only shown when pinned series exist) -->
+      <section id="pinned-section" class="pinned-section hidden" aria-label="Pinned series">
+        <div class="pinned-section-header">
+          <div class="pinned-section-title-group">
+            <svg class="pinned-section-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <line x1="12" y1="17" x2="12" y2="22"/>
+              <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.89A4 4 0 0 1 14 9V5a2 2 0 0 1 2-2H8a2 2 0 0 1 2 2v4a4 4 0 0 1-2.11 3.56l-1.78.89A2 2 0 0 0 5 15.24Z"/>
+            </svg>
+            <h2 class="pinned-section-title">Pinned</h2>
+            <span class="pinned-section-count" id="pinned-section-count"></span>
+          </div>
+        </div>
+        <div id="pinned-grid" class="series-grid pinned-grid">
+          <!-- Pinned series cards injected by JS -->
+        </div>
+      </section>
+
       <div id="series-grid" class="series-grid">
         <!-- Series cards injected by JS -->
       </div>
@@ -187,6 +204,30 @@
         <div class="series-info-panel">
           <h1 class="view-title series-title-large" id="series-title">Series Name</h1>
           <div class="view-subtitle series-meta-row" id="series-meta">Loading chapters...</div>
+
+          <!-- Series Action Bar: Resume Reading & Pin Series -->
+          <div class="series-action-bar" id="series-action-bar">
+            <button type="button" class="btn btn-primary btn-resume-reading" id="btn-resume-reading" aria-label="Start reading series">
+              <svg class="resume-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+              </svg>
+              <span id="resume-reading-text">Start Reading</span>
+            </button>
+            <button type="button" class="btn btn-secondary btn-pin-series" id="btn-pin-series" aria-label="Pin series to library" title="Pin series to library">
+              <svg class="pin-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <line x1="12" y1="17" x2="12" y2="22"/>
+                <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.89A4 4 0 0 1 14 9V5a2 2 0 0 1 2-2H8a2 2 0 0 1 2 2v4a4 4 0 0 1-2.11 3.56l-1.78.89A2 2 0 0 0 5 15.24Z"/>
+              </svg>
+              <span id="pin-series-text">Pin Series</span>
+            </button>
+            <div class="series-completed-badge hidden" id="series-completed-badge" aria-label="All chapters completed">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+              </svg>
+              <span>Completed</span>
+            </div>
+          </div>
           <!-- Metadata Display View -->
           <div class="series-metadata-display" id="series-metadata-display">
             <div class="series-author hidden" id="series-author">
