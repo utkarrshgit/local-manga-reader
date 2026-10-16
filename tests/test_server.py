@@ -2573,7 +2573,9 @@ class TestUserProfile(unittest.TestCase):
         self.assertIn('id="profile-avatar-input"', html)
         self.assertIn('id="btn-save-profile"', html)
         self.assertIn('id="btn-change-folder"', html)
-        self.assertIn('id="settings-library-path"', html)
+        self.assertIn('id="input-library-path"', html)
+        self.assertNotIn('id="settings-library-path"', html)
+        self.assertNotIn('id="dropdown-item-remote"', html)
 
         # CSS checks
         _, css_body = self._simulate_get("/style.css")

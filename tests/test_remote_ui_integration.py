@@ -504,7 +504,7 @@ class TestRemoteUIIntegration(unittest.TestCase):
         self.assertIn('id="remote-recent-section"', content)
         self.assertIn('id="remote-recent-list"', content)
         self.assertIn('id="remote-modal-error"', content)
-        self.assertIn('id="dropdown-item-remote"', content)
+        self.assertNotIn('id="dropdown-item-remote"', content)
 
     def test_static_style_css_contains_remote_and_retry_styles(self) -> None:
         """style.css contains styles for remote UI controls, collapsible disclosure, and recent entries."""

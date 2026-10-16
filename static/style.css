@@ -2801,39 +2801,10 @@ body.in-fullscreen .reader-progress-container {
   margin: 0;
 }
 
-.settings-path-box {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
-  background-color: var(--surface-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xs);
-  overflow: hidden;
-}
-
-.settings-path-label {
-  font-family: var(--font-sans);
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.settings-path-value {
-  font-family: monospace;
-  font-size: 0.78rem;
-  color: var(--text-secondary);
-  word-break: break-all;
-  white-space: pre-wrap;
-}
-
 .settings-path-form {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-top: 4px;
 }
 
 .settings-path-field-label {

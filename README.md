@@ -82,7 +82,7 @@ Manga/
 ## Changing Library Folder
 
 You can choose or switch your manga library folder at any time directly inside the app:
-- **Type or Paste a Path**: Open **Settings** from the profile menu and enter the full filesystem path (e.g. `/Users/yourname/Manga`) into the **Switch Library Folder** field, then click **Apply** or press **Enter**.
+- **Type or Paste a Path**: Open **Settings** from the profile menu and enter the full filesystem path (e.g. `/Users/yourname/Manga`) into the **Library Folder Path** field, then click **Apply** or press **Enter**.
 - **Browse with Folder Picker**: Click **Browse folder** in Settings (or **Choose another folder** on the library screen) to select a directory using your native system dialog.
 - **Validation & Error Handling**: Invalid, nonexistent, or file paths show an inline error message without switching the active library or modifying your saved configuration, allowing you to correct the path and retry.
 - **Per-Library Pins Preserved**: Switching libraries immediately loads that collection's pinned series and keeps pin lists completely isolated between libraries.

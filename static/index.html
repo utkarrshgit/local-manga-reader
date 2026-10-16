@@ -69,14 +69,6 @@
             </svg>
             <span>Settings</span>
           </button>
-          <button type="button" class="profile-dropdown-item" id="dropdown-item-remote" role="menuitem">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="10"/>
-              <line x1="2" y1="12" x2="22" y2="12"/>
-              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-            </svg>
-            <span>Open Remote Manga</span>
-          </button>
           <button type="button" class="profile-dropdown-item" id="dropdown-item-shortcuts" role="menuitem">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <rect x="2" y="4" width="20" height="16" rx="2" ry="2"/>
@@ -578,13 +570,8 @@
         <div class="settings-section">
           <h3 class="settings-section-title">Manga Library</h3>
           <p class="settings-section-desc">Folder location where your manga series and chapters are stored on your local disk.</p>
-          <div class="settings-path-box">
-            <span class="settings-path-label">Current Folder</span>
-            <code class="settings-path-value" id="settings-library-path">Loading...</code>
-          </div>
-
           <form id="form-library-path" class="settings-path-form" onsubmit="return false;">
-            <label for="input-library-path" class="settings-path-field-label">Switch Library Folder</label>
+            <label for="input-library-path" class="settings-path-field-label">Library Folder Path</label>
             <div class="settings-path-input-group">
               <input
                 type="text"

@@ -154,7 +154,10 @@ class TestEditableLibraryPath(unittest.TestCase):
         self.assertIn('id="input-library-path"', html)
         self.assertIn('id="btn-apply-library-path"', html)
         self.assertIn('id="library-path-error"', html)
-        self.assertIn('id="settings-library-path"', html)
+        self.assertNotIn('id="settings-library-path"', html)
+        self.assertNotIn('settings-path-box', html)
+        self.assertIn('Library Folder Path', html)
+        self.assertNotIn('Switch Library Folder', html)
         self.assertIn('id="btn-change-folder"', html)
 
         # CSS checks
@@ -452,6 +455,36 @@ class TestEditableLibraryPath(unittest.TestCase):
         self.assertIn("var(--border)", css)
         self.assertIn(".settings-path-input:focus", css)
         self.assertIn(".btn-apply-path", css)
+
+    # 21. Single library path display and remote entry point cleanup
+    def test_21_single_library_path_display_and_remote_cleanup(self):
+        """21. Settings modal contains only one library path display (editable input), and remote button remains on library page."""
+        headers, html = self._simulate_get("/")
+        self.assertIn("200 OK", headers)
+
+        # Settings modal checks: single path display
+        settings_modal_start = html.find('id="modal-settings"')
+        self.assertNotEqual(settings_modal_start, -1)
+        settings_modal_end = html.find('<!-- Keyboard Shortcuts Modal -->', settings_modal_start)
+        settings_html = html[settings_modal_start:settings_modal_end] if settings_modal_end != -1 else html[settings_modal_start:]
+
+        # Exactly one input/display for library path
+        self.assertIn('id="input-library-path"', settings_html)
+        self.assertNotIn('id="settings-library-path"', settings_html)
+        self.assertNotIn('Current Folder', settings_html)
+        self.assertIn('Library Folder Path', settings_html)
+        self.assertIn('id="btn-apply-library-path"', settings_html)
+        self.assertIn('id="btn-change-folder"', settings_html)
+
+        # Remote button on main library page remains present and accessible
+        self.assertIn('id="btn-open-remote"', html)
+
+        # Profile dropdown does not contain redundant Open Remote Manga entry
+        dropdown_start = html.find('id="profile-dropdown"')
+        dropdown_end = html.find('</header>', dropdown_start)
+        dropdown_html = html[dropdown_start:dropdown_end]
+        self.assertNotIn('id="dropdown-item-remote"', dropdown_html)
+        self.assertNotIn('Open Remote Manga', dropdown_html)
 
 
 if __name__ == "__main__":

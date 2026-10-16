@@ -51,7 +51,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const modalSettings = document.getElementById("modal-settings");
   const btnCloseSettingsModal = document.getElementById("btn-close-settings-modal");
   const btnCloseSettings = document.getElementById("btn-close-settings");
-  const settingsLibraryPath = document.getElementById("settings-library-path");
   const formLibraryPath = document.getElementById("form-library-path");
   const inputLibraryPath = document.getElementById("input-library-path");
   const btnApplyLibraryPath = document.getElementById("btn-apply-library-path");
@@ -67,7 +66,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // DOM Elements - Remote Series Modal
   const btnOpenRemote = document.getElementById("btn-open-remote");
-  const dropdownItemRemote = document.getElementById("dropdown-item-remote");
   const modalRemote = document.getElementById("modal-remote");
   const btnCloseRemoteModal = document.getElementById("btn-close-remote-modal");
   const btnCancelRemote = document.getElementById("btn-cancel-remote");
@@ -788,26 +786,19 @@ document.addEventListener("DOMContentLoaded", () => {
     if (btnApplyLibraryPath) btnApplyLibraryPath.disabled = false;
     if (btnChangeFolder) btnChangeFolder.disabled = false;
 
-    if (settingsLibraryPath) {
-      settingsLibraryPath.textContent = "Loading...";
+    if (inputLibraryPath) {
       try {
         const res = await fetch("/api/library");
         if (res.ok) {
           const data = await res.json();
           if (data && data.library_path) {
-            settingsLibraryPath.textContent = data.library_path;
-            if (inputLibraryPath) {
-              inputLibraryPath.value = data.library_path;
-            }
+            inputLibraryPath.value = data.library_path;
           } else {
-            settingsLibraryPath.textContent = "No folder selected";
-            if (inputLibraryPath) {
-              inputLibraryPath.value = "";
-            }
+            inputLibraryPath.value = "";
           }
         }
       } catch {
-        settingsLibraryPath.textContent = "Unavailable";
+        // preserve current input value on fetch error
       }
     }
 
@@ -2496,9 +2487,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (data.success) {
         showSuccess(`Manga folder updated: ${data.library_path}`);
-        if (settingsLibraryPath) {
-          settingsLibraryPath.textContent = data.library_path;
-        }
         if (inputLibraryPath) {
           inputLibraryPath.value = data.library_path;
         }
@@ -2560,9 +2548,6 @@ document.addEventListener("DOMContentLoaded", () => {
       const data = await res.json();
       if (data.success) {
         showSuccess(`Manga folder updated: ${data.library_path}`);
-        if (settingsLibraryPath) {
-          settingsLibraryPath.textContent = data.library_path;
-        }
         if (inputLibraryPath) {
           inputLibraryPath.value = data.library_path;
         }
@@ -2621,9 +2606,6 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       if (data.library_path) {
-        if (settingsLibraryPath) {
-          settingsLibraryPath.textContent = data.library_path;
-        }
         if (inputLibraryPath && !inputLibraryPath.matches(":focus")) {
           inputLibraryPath.value = data.library_path;
         }
@@ -4528,13 +4510,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (btnOpenRemote) {
     btnOpenRemote.addEventListener("click", (e) => {
-      e.stopPropagation();
-      openRemoteModal();
-    });
-  }
-
-  if (dropdownItemRemote) {
-    dropdownItemRemote.addEventListener("click", (e) => {
       e.stopPropagation();
       openRemoteModal();
     });

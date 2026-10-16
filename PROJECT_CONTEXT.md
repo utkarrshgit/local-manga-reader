@@ -371,7 +371,7 @@ The frontend is a single-page application governed by hash changes (`hashchange`
 - `#/read/<series_name>/<chapter_name>`: **Reader View**. Continuous vertical reader, sticky header, previous/next chapter navigation, fullscreen toggle, reading mode switch, and interactive progress timeline.
 
 ### Remote Manga UI (`#modal-remote`)
-- Triggered via the **Remote** button in the library header or **Open Remote Manga** in the profile dropdown.
+- Triggered via the **Remote** button in the library header.
 - **URL Input**: Paste any supported series, chapter, gallery URL, or canonical `remote:...` identifier.
 - **Supported Formats Disclosure**: Collapsible accordion populated dynamically from `/api/remote/providers`. Shows registered public providers (WeebCentral, nhentai) with name, URL type, and format patterns.
 - **Recent Remote Series**:
