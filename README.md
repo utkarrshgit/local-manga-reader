@@ -82,8 +82,11 @@ Manga/
 ## Changing Library Folder
 
 You can choose or switch your manga library folder at any time directly inside the app:
-- Click **Choose another folder** on the library screen, or open the profile menu and select a new folder.
-- Your selection is remembered automatically for future launches.
+- **Type or Paste a Path**: Open **Settings** from the profile menu and enter the full filesystem path (e.g. `/Users/yourname/Manga`) into the **Switch Library Folder** field, then click **Apply** or press **Enter**.
+- **Browse with Folder Picker**: Click **Browse folder** in Settings (or **Choose another folder** on the library screen) to select a directory using your native system dialog.
+- **Validation & Error Handling**: Invalid, nonexistent, or file paths show an inline error message without switching the active library or modifying your saved configuration, allowing you to correct the path and retry.
+- **Per-Library Pins Preserved**: Switching libraries immediately loads that collection's pinned series and keeps pin lists completely isolated between libraries.
+- **Persistent Selection**: Your chosen library is remembered automatically in `settings.json` for future launches, while the CLI `--dir` override remains temporary for that server session only.
 
 ## CLI Reference
 
@@ -113,6 +116,9 @@ python3 server.py --help
 
 ## Reading / Keyboard Shortcuts
 
+### Keyboard Shortcuts Reference Overlay
+Press **`Shift + /`** or **`?`** from anywhere in the app (Library view, Series detail, or Reader view) to open the interactive **Keyboard Shortcuts** overlay. It can also be opened via the Profile dropdown menu. The overlay displays implemented shortcuts grouped by context (**Reader navigation**, **Reading controls**, and **Zoom and screenshots**), highlighting shortcuts active in the current view. The overlay can be dismissed with **`Escape`**, the close button, or clicking the backdrop.
+
 ### Reading Modes & Controls
 - **Spaced Mode**: Adds spacing and subtle borders between pages, ideal for traditional Japanese manga.
 - **Seamless Mode**: Strips all padding and borders for a continuous unbroken scroll, ideal for Korean manhwa and webtoons.
@@ -122,25 +128,24 @@ python3 server.py --help
 
 ### Keyboard Shortcuts
 
-| Key | Action |
-| :--- | :--- |
-| `Left` / `Page Up` | Go to previous chapter |
-| `Right` / `Page Down` | Go to next chapter |
-| `Up Arrow` | Scroll up through the current chapter (hold for continuous scroll) |
-| `Down Arrow` | Scroll down through the current chapter (hold for continuous scroll) |
-| `Shift + Up Arrow` | Jump to the top of the chapter |
-| `Shift + Down Arrow` | Jump to the bottom of the chapter |
-| `Home` | Scroll to top of chapter |
-| `End` | Scroll to bottom of chapter |
-| `F` | Toggle fullscreen |
-| `B` | Toggle chapter bookmark |
-| `Shift + R` | Toggle chapter Read / Unread status |
-| `Shift + S` | Toggle Spaced / Seamless reading mode |
-| `S` | Save currently displayed page screenshot to `<Library>/Screenshots/` |
-| `=` / `+` | Zoom in by 10% (50% to 300% range, temporary) |
-| `-` | Zoom out by 10% (50% to 300% range, temporary) |
-| `0` | Reset zoom to 100% (temporary) |
-| `Escape` | Exit fullscreen / close modal / back to series |
+| Key | Action | Context |
+| :--- | :--- | :--- |
+| `Left Arrow` | Go to previous chapter | Reader view |
+| `Right Arrow` | Go to next chapter | Reader view |
+| `Up Arrow` | Scroll up through the current chapter (hold for continuous scroll) | Reader view |
+| `Down Arrow` | Scroll down through the current chapter (hold for continuous scroll) | Reader view |
+| `Shift + Up Arrow` | Jump to the top of the chapter | Reader view |
+| `Shift + Down Arrow` | Jump to the bottom of the chapter | Reader view |
+| `F` | Toggle fullscreen | Reader view |
+| `B` | Toggle chapter bookmark | Reader view |
+| `Shift + R` | Toggle chapter Read / Unread status | Reader view |
+| `Shift + S` | Toggle Spaced / Seamless reading mode | Reader view |
+| `S` | Save currently displayed page screenshot to `<Library>/Screenshots/` | Reader view |
+| `=` / `+` | Zoom in by 10% (50% to 300% range, temporary) | Reader view |
+| `-` | Zoom out by 10% (50% to 300% range, temporary) | Reader view |
+| `0` | Reset zoom to 100% (temporary) | Reader view |
+| `Shift + /` / `?` | Toggle keyboard shortcuts reference overlay | All views |
+| `Escape` | Exit fullscreen / close active modal or dropdown / return to series view | All views |
 
 > **Note on Zoom**: Zooming is a temporary viewing adjustment with a range of 50% to 300% (default 100%). It adjusts manga page images only, persists across entering/exiting fullscreen within the same chapter session, and resets to 100% when navigating to another chapter or exiting the reader view. Zoom state is never stored in local storage, server settings, or series preferences.
 
@@ -153,7 +158,8 @@ For remote manga streams, screenshots are automatically saved to your configured
 
 ## Library & Organization
 
-- **Pinned Manga**: Pin your favorite series to keep them anchored at the top of your library for quick access.
+- **Per-Library Pinned Series**: Pin your favorite series to keep them anchored at the top of your library for quick access. Pinned series are persisted independently for each library folder using canonical filesystem paths. Switching libraries immediately displays only that library's own pinned series and never mixes pinned series across collections.
+- **Temporary CLI Library Overrides (`--dir`)**: Specifying `--dir <path>` uses the pin list associated with that temporary library during the session without modifying your saved default library configuration in `settings.json`.
 - **Unified Sorting**: Sort by Name, Chapters, or Unread count with a single click.
 - **Centered Series Header**: The manga title in the series view header is centered relative to the viewport with smart ellipsis truncation on narrow screens.
 

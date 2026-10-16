@@ -157,10 +157,31 @@ def save_user_profile(name: str | None = None, avatar_bytes: bytes | None = None
     return load_user_profile()
 
 
+def canonicalize_library_path(path: str | Path | None) -> str | None:
+    """
+    Normalizes a filesystem path into a canonical, absolute representation.
+    Handles relative paths, redundant segments (.., .), user tildes (~), and trailing slashes.
+    Returns None if path is None or empty.
+    """
+    if path is None:
+        return None
+    p_str = str(path).strip()
+    if not p_str:
+        return None
+    try:
+        return str(Path(p_str).expanduser().resolve())
+    except Exception:
+        try:
+            return os.path.abspath(os.path.expanduser(p_str))
+        except Exception:
+            return p_str
+
+
 def load_app_settings() -> dict:
     """
     Loads application settings (theme, library_path, etc.) from settings.json.
     Automatically migrates legacy standalone library_path file into settings.json if present.
+    Automatically migrates legacy global 'pinned' list into per-library 'pinned_by_library' if present.
     """
     settings_file = get_settings_file_path()
     legacy_file = get_legacy_config_file_path()
@@ -205,6 +226,7 @@ def load_app_settings() -> dict:
                     except OSError:
                         pass
                     library_path = legacy_content
+                    raw_data["library_path"] = legacy_content
                 except Exception:
                     # Write failed: clean up temp file and do NOT remove legacy file
                     if temp_settings.is_file():
@@ -214,8 +236,44 @@ def load_app_settings() -> dict:
                             pass
                     # Return legacy_content in-memory so user does not lose configured library
                     library_path = legacy_content
+                    raw_data["library_path"] = legacy_content
         except Exception:
             pass
+
+    # Migration check 2: if settings.json contains legacy global "pinned" list, migrate to "pinned_by_library"
+    raw_pinned = raw_data.get("pinned")
+    if isinstance(raw_pinned, list):
+        target_lib = library_path or (os.environ.get("MANGA_DIR") if os.environ.get("MANGA_DIR") else None)
+        if target_lib:
+            canon_lib = canonicalize_library_path(target_lib)
+            if canon_lib:
+                raw_p_by_lib = raw_data.get("pinned_by_library")
+                p_by_lib: dict[str, list[str]] = dict(raw_p_by_lib) if isinstance(raw_p_by_lib, dict) else {}
+
+                existing = list(p_by_lib.get(canon_lib, [])) if isinstance(p_by_lib.get(canon_lib), list) else []
+                for p in raw_pinned:
+                    if isinstance(p, str) and p.strip():
+                        clean_p = p.strip()
+                        if clean_p not in existing:
+                            existing.append(clean_p)
+                p_by_lib[canon_lib] = existing
+                raw_data["pinned_by_library"] = p_by_lib
+                del raw_data["pinned"]
+
+                # Atomic persist of migration
+                config_dir = settings_file.parent
+                config_dir.mkdir(parents=True, exist_ok=True)
+                temp_settings = config_dir / f"{settings_file.name}.tmp"
+                try:
+                    temp_settings.write_text(json.dumps(raw_data, indent=2), encoding="utf-8")
+                    temp_settings.replace(settings_file)
+                except Exception:
+                    if temp_settings.is_file():
+                        try:
+                            temp_settings.unlink()
+                        except OSError:
+                            pass
+                    raw_data["pinned"] = raw_pinned
 
     result: dict = {"theme": theme}
     if library_path is not None:
@@ -229,7 +287,13 @@ def load_app_settings() -> dict:
     return result
 
 
-def save_app_settings(theme: str | None = None, library_path: str | None = None, pinned: list[str] | None = None) -> dict:
+def save_app_settings(
+    theme: str | None = None,
+    library_path: str | None = None,
+    pinned: list[str] | None = None,
+    target_library_path: str | Path | None = None,
+    pinned_by_library: dict[str, list[str]] | None = None,
+) -> dict:
     """Saves application settings (theme, library_path, pinned series) to settings.json."""
     settings_file = get_settings_file_path()
     config_dir = settings_file.parent
@@ -250,6 +314,20 @@ def save_app_settings(theme: str | None = None, library_path: str | None = None,
     elif "library_path" in current and current["library_path"]:
         payload["library_path"] = current["library_path"]
 
+    # Manage pinned_by_library dictionary
+    raw_p_by_lib = current.get("pinned_by_library")
+    p_by_lib: dict[str, list[str]] = dict(raw_p_by_lib) if isinstance(raw_p_by_lib, dict) else {}
+
+    if pinned_by_library is not None and isinstance(pinned_by_library, dict):
+        for k, v in pinned_by_library.items():
+            canon_k = canonicalize_library_path(k)
+            if canon_k and isinstance(v, list):
+                clean_list = []
+                for item in v:
+                    if isinstance(item, str) and item.strip() and item.strip() not in clean_list:
+                        clean_list.append(item.strip())
+                p_by_lib[canon_k] = clean_list
+
     if pinned is not None:
         cleaned_pinned = []
         for p in pinned:
@@ -257,12 +335,38 @@ def save_app_settings(theme: str | None = None, library_path: str | None = None,
                 clean_p = p.strip()
                 if clean_p not in cleaned_pinned:
                     cleaned_pinned.append(clean_p)
-        payload["pinned"] = cleaned_pinned
-    elif "pinned" in current and isinstance(current["pinned"], list):
-        payload["pinned"] = current["pinned"]
+
+        target_lib = target_library_path
+        if target_lib is None:
+            if library_path is not None:
+                target_lib = library_path
+            elif "library_path" in payload and payload["library_path"]:
+                target_lib = payload["library_path"]
+            else:
+                target_lib = get_default_library_dir()
+
+        canon_target = canonicalize_library_path(target_lib)
+        if canon_target:
+            p_by_lib[canon_target] = cleaned_pinned
+        else:
+            payload["pinned"] = cleaned_pinned
+
+    # Migrate any still-unmigrated legacy pins if target library is now known
+    if "pinned" in current and isinstance(current["pinned"], list) and "pinned" not in payload:
+        target_mig = payload.get("library_path") or get_default_library_dir()
+        canon_mig = canonicalize_library_path(target_mig)
+        if canon_mig:
+            if canon_mig not in p_by_lib:
+                clean_legacy = [x.strip() for x in current["pinned"] if isinstance(x, str) and x.strip()]
+                p_by_lib[canon_mig] = clean_legacy
+        else:
+            payload["pinned"] = current["pinned"]
+
+    if p_by_lib:
+        payload["pinned_by_library"] = p_by_lib
 
     for k, v in current.items():
-        if k not in ("appearance", "theme", "library_path", "pinned"):
+        if k not in ("appearance", "theme", "library_path", "pinned", "pinned_by_library"):
             payload[k] = v
 
     temp_settings = config_dir / f"{settings_file.name}.tmp"
@@ -280,34 +384,79 @@ def save_app_settings(theme: str | None = None, library_path: str | None = None,
     return load_app_settings()
 
 
-def load_pinned_series() -> list[str]:
-    """Loads list of pinned series identifiers from settings.json."""
+def load_pinned_series(library_path: str | Path | None = None) -> list[str]:
+    """Loads list of pinned series identifiers for a specific library folder from settings.json."""
     settings = load_app_settings()
-    pinned = settings.get("pinned", [])
+    pinned_by_library = settings.get("pinned_by_library")
+    if not isinstance(pinned_by_library, dict):
+        pinned_by_library = {}
+
+    target_path = library_path
+    if target_path is None:
+        if "library_path" in settings and settings["library_path"]:
+            target_path = settings["library_path"]
+        else:
+            target_path = get_default_library_dir()
+
+    if target_path is None:
+        # Fallback check if legacy unmigrated list is still present
+        legacy = settings.get("pinned")
+        if isinstance(legacy, list):
+            clean_pinned = []
+            for s in legacy:
+                if isinstance(s, str) and s.strip() and s.strip() not in clean_pinned:
+                    clean_pinned.append(s.strip())
+            return clean_pinned
+        return []
+
+    canon_path = canonicalize_library_path(target_path)
+    if not canon_path:
+        return []
+
+    pinned = pinned_by_library.get(canon_path)
     if isinstance(pinned, list):
         clean_pinned = []
         for s in pinned:
             if isinstance(s, str) and s.strip() and s.strip() not in clean_pinned:
                 clean_pinned.append(s.strip())
         return clean_pinned
+
+    # If library not in pinned_by_library yet, check if there's unmigrated legacy pinned
+    legacy = settings.get("pinned")
+    if isinstance(legacy, list):
+        clean_pinned = []
+        for s in legacy:
+            if isinstance(s, str) and s.strip() and s.strip() not in clean_pinned:
+                clean_pinned.append(s.strip())
+        return clean_pinned
+
     return []
 
 
-def save_pinned_series(pinned_list: list[str]) -> list[str]:
-    """Saves list of pinned series identifiers to settings.json."""
+def save_pinned_series(pinned_list: list[str], library_path: str | Path | None = None) -> list[str]:
+    """Saves list of pinned series identifiers for a specific library folder to settings.json."""
     clean_pinned: list[str] = []
     for item in pinned_list:
         if isinstance(item, str) and item.strip():
             s = item.strip()
             if s not in clean_pinned:
                 clean_pinned.append(s)
-    save_app_settings(pinned=clean_pinned)
+
+    target_lib = library_path
+    if target_lib is None:
+        target_lib = load_saved_library_path() or get_default_library_dir()
+
+    save_app_settings(pinned=clean_pinned, target_library_path=target_lib)
     return clean_pinned
 
 
-def toggle_pin_series(series_name: str, pinned: bool | None = None) -> tuple[bool, list[str]]:
-    """Toggles or sets the pinned state for a series. Returns (is_pinned, updated_pinned_list)."""
-    current = load_pinned_series()
+def toggle_pin_series(series_name: str, pinned: bool | None = None, library_path: str | Path | None = None) -> tuple[bool, list[str]]:
+    """Toggles or sets the pinned state for a series in a specific library. Returns (is_pinned, updated_pinned_list)."""
+    target_lib = library_path
+    if target_lib is None:
+        target_lib = load_saved_library_path() or get_default_library_dir()
+
+    current = load_pinned_series(target_lib)
     name = series_name.strip()
     is_currently_pinned = name in current
 
@@ -321,7 +470,7 @@ def toggle_pin_series(series_name: str, pinned: bool | None = None) -> tuple[boo
     elif not should_pin and is_currently_pinned:
         current = [s for s in current if s != name]
 
-    save_pinned_series(current)
+    save_pinned_series(current, library_path=target_lib)
     return should_pin, current
 
 
@@ -1613,7 +1762,8 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
             self._send_json({
                 "library_path": str(self.library.root_path) if self.library.root_path else None,
                 "library_exists": self.library.exists(),
-                "series_count": len(self.library.list_series()) if self.library.exists() else 0
+                "series_count": len(self.library.list_series()) if self.library.exists() else 0,
+                "pinned": load_pinned_series(self.library.root_path if self.library else None)
             })
             return
 
@@ -1783,18 +1933,20 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
 
         # API: Get pinned series list (/api/pin, /api/pinned)
         if path in ("/api/pin", "/api/pinned"):
-            self._send_json({"pinned": load_pinned_series()})
+            target_lib = get_param("library_path") or (self.library.root_path if self.library else None)
+            self._send_json({"pinned": load_pinned_series(target_lib)})
             return
 
         # 1. API: List all series
         if path == "/api/series":
             series = self.library.list_series()
+            active_pinned = load_pinned_series(self.library.root_path if self.library else None)
             self._send_json({
                 "library_path": str(self.library.root_path) if self.library.root_path else None,
                 "library_exists": self.library.exists(),
                 "series_count": len(series),
                 "series": series,
-                "pinned": load_pinned_series()
+                "pinned": active_pinned
             })
             return
 
@@ -2336,7 +2488,8 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 self._send_error("Invalid or missing settings", HTTPStatus.BAD_REQUEST)
                 return
 
-            updated = save_app_settings(theme=theme, pinned=pinned)
+            target_lib = body.get("library_path") or (self.library.root_path if self.library else None)
+            updated = save_app_settings(theme=theme, pinned=pinned, target_library_path=target_lib)
             self._send_json({"success": True, **updated})
             return
 
@@ -2358,7 +2511,8 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 self._send_error("Field 'pinned' must be a boolean", HTTPStatus.BAD_REQUEST)
                 return
 
-            is_pinned, pinned_list = toggle_pin_series(series, pinned_val)
+            target_lib = body.get("library_path") or (self.library.root_path if self.library else None)
+            is_pinned, pinned_list = toggle_pin_series(series, pinned_val, library_path=target_lib)
             self._send_json({
                 "success": True,
                 "series": series,
@@ -3170,23 +3324,54 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 self._send_error("Missing required field: 'action' or 'path'", HTTPStatus.BAD_REQUEST)
                 return
 
-            resolved_path = Path(target_path_str).expanduser().resolve()
-            if not resolved_path.exists() or not resolved_path.is_dir():
-                self._send_error(f"Selected path is not an existing directory: {resolved_path}", HTTPStatus.BAD_REQUEST)
+            # Reject URLs upfront
+            if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", target_path_str):
+                self._send_error("URLs cannot be used as library paths", HTTPStatus.BAD_REQUEST)
+                return
+
+            try:
+                canon_str = canonicalize_library_path(target_path_str)
+                if not canon_str:
+                    self._send_error("Invalid filesystem path", HTTPStatus.BAD_REQUEST)
+                    return
+                resolved_path = Path(canon_str)
+                if not resolved_path.exists():
+                    self._send_error(f"Directory does not exist: {target_path_str}", HTTPStatus.BAD_REQUEST)
+                    return
+                if not resolved_path.is_dir():
+                    self._send_error(f"Path is a file, not a directory: {target_path_str}", HTTPStatus.BAD_REQUEST)
+                    return
+
+                # Test directory readability
+                try:
+                    with os.scandir(resolved_path):
+                        pass
+                except PermissionError:
+                    self._send_error(f"Permission denied: cannot read directory '{target_path_str}'", HTTPStatus.BAD_REQUEST)
+                    return
+            except PermissionError:
+                self._send_error(f"Permission denied: cannot access path '{target_path_str}'", HTTPStatus.BAD_REQUEST)
+                return
+            except OSError as e:
+                self._send_error(f"Cannot access directory: {e.strerror or str(e)}", HTTPStatus.BAD_REQUEST)
+                return
+            except Exception as e:
+                self._send_error(f"Invalid path: {e}", HTTPStatus.BAD_REQUEST)
                 return
 
             # Update library in memory for all subsequent requests
-            new_lib = MangaLibrary(str(resolved_path))
+            new_lib = MangaLibrary(canon_str)
             MangaRequestHandler.library = new_lib
 
             # Persist to configuration file outside git repository
-            save_library_path_config(str(resolved_path))
+            save_library_path_config(canon_str)
 
             self._send_json({
                 "success": True,
-                "library_path": str(resolved_path),
+                "library_path": canon_str,
                 "library_exists": True,
-                "series_count": len(new_lib.list_series())
+                "series_count": len(new_lib.list_series()),
+                "pinned": load_pinned_series(canon_str)
             })
             return
 

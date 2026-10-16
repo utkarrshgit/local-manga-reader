@@ -52,6 +52,18 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnCloseSettingsModal = document.getElementById("btn-close-settings-modal");
   const btnCloseSettings = document.getElementById("btn-close-settings");
   const settingsLibraryPath = document.getElementById("settings-library-path");
+  const formLibraryPath = document.getElementById("form-library-path");
+  const inputLibraryPath = document.getElementById("input-library-path");
+  const btnApplyLibraryPath = document.getElementById("btn-apply-library-path");
+  const libraryPathError = document.getElementById("library-path-error");
+
+  // DOM Elements - Keyboard Shortcuts Modal
+  const modalShortcuts = document.getElementById("modal-shortcuts");
+  const modalShortcutsBody = document.getElementById("modal-shortcuts-body");
+  const btnCloseShortcutsModal = document.getElementById("btn-close-shortcuts-modal");
+  const btnCloseShortcuts = document.getElementById("btn-close-shortcuts");
+  const dropdownItemShortcuts = document.getElementById("dropdown-item-shortcuts");
+  let previouslyFocusedElement = null;
 
   // DOM Elements - Remote Series Modal
   const btnOpenRemote = document.getElementById("btn-open-remote");
@@ -690,7 +702,14 @@ document.addEventListener("DOMContentLoaded", () => {
     if (modalProfile) modalProfile.classList.add("hidden");
     if (modalSettings) modalSettings.classList.add("hidden");
     if (modalRemote) modalRemote.classList.add("hidden");
+    if (modalShortcuts) modalShortcuts.classList.add("hidden");
     if (modalOverlay) modalOverlay.classList.add("hidden");
+    if (previouslyFocusedElement && typeof previouslyFocusedElement.focus === "function") {
+      try {
+        previouslyFocusedElement.focus();
+      } catch {}
+      previouslyFocusedElement = null;
+    }
     toggleProfileDropdown(false);
   }
 
@@ -740,11 +759,34 @@ document.addEventListener("DOMContentLoaded", () => {
     if (profileNameInput) profileNameInput.focus();
   }
 
+  function showLibraryPathError(message) {
+    if (libraryPathError) {
+      libraryPathError.textContent = message;
+      libraryPathError.classList.remove("hidden");
+    }
+    if (inputLibraryPath) {
+      inputLibraryPath.classList.add("input-error");
+    }
+  }
+
+  function hideLibraryPathError() {
+    if (libraryPathError) {
+      libraryPathError.textContent = "";
+      libraryPathError.classList.add("hidden");
+    }
+    if (inputLibraryPath) {
+      inputLibraryPath.classList.remove("input-error");
+    }
+  }
+
   async function openSettingsModal() {
     toggleProfileDropdown(false);
     if (modalProfile) modalProfile.classList.add("hidden");
 
     applySettings(currentSettings);
+    hideLibraryPathError();
+    if (btnApplyLibraryPath) btnApplyLibraryPath.disabled = false;
+    if (btnChangeFolder) btnChangeFolder.disabled = false;
 
     if (settingsLibraryPath) {
       settingsLibraryPath.textContent = "Loading...";
@@ -754,8 +796,14 @@ document.addEventListener("DOMContentLoaded", () => {
           const data = await res.json();
           if (data && data.library_path) {
             settingsLibraryPath.textContent = data.library_path;
+            if (inputLibraryPath) {
+              inputLibraryPath.value = data.library_path;
+            }
           } else {
             settingsLibraryPath.textContent = "No folder selected";
+            if (inputLibraryPath) {
+              inputLibraryPath.value = "";
+            }
           }
         }
       } catch {
@@ -765,6 +813,361 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (modalOverlay) modalOverlay.classList.remove("hidden");
     if (modalSettings) modalSettings.classList.remove("hidden");
+  }
+
+  // Shared Keyboard Shortcut Registry (Single Source of Truth)
+  const KEYBOARD_SHORTCUTS = [
+    // Reader navigation
+    {
+      id: "prev-chapter",
+      category: "Reader navigation",
+      description: "Navigate to previous chapter",
+      context: "reader",
+      contextLabel: "Reader view",
+      displayKeyCombinations: [
+        { keys: ["←"] }
+      ],
+      matches: (e) => e.key === "ArrowLeft"
+    },
+    {
+      id: "next-chapter",
+      category: "Reader navigation",
+      description: "Navigate to next chapter",
+      context: "reader",
+      contextLabel: "Reader view",
+      displayKeyCombinations: [
+        { keys: ["→"] }
+      ],
+      matches: (e) => e.key === "ArrowRight"
+    },
+    {
+      id: "scroll-up",
+      category: "Reader navigation",
+      description: "Scroll up (hold for continuous scroll)",
+      context: "reader",
+      contextLabel: "Reader view",
+      displayKeyCombinations: [
+        { keys: ["↑"] }
+      ],
+      matches: (e) => !e.shiftKey && e.key === "ArrowUp"
+    },
+    {
+      id: "scroll-down",
+      category: "Reader navigation",
+      description: "Scroll down (hold for continuous scroll)",
+      context: "reader",
+      contextLabel: "Reader view",
+      displayKeyCombinations: [
+        { keys: ["↓"] }
+      ],
+      matches: (e) => !e.shiftKey && e.key === "ArrowDown"
+    },
+    {
+      id: "jump-top",
+      category: "Reader navigation",
+      description: "Jump directly to top of chapter",
+      context: "reader",
+      contextLabel: "Reader view",
+      displayKeyCombinations: [
+        { keys: ["Shift", "↑"], separator: "+" }
+      ],
+      matches: (e) => e.shiftKey && e.key === "ArrowUp"
+    },
+    {
+      id: "jump-bottom",
+      category: "Reader navigation",
+      description: "Jump directly to bottom of chapter",
+      context: "reader",
+      contextLabel: "Reader view",
+      displayKeyCombinations: [
+        { keys: ["Shift", "↓"], separator: "+" }
+      ],
+      matches: (e) => e.shiftKey && e.key === "ArrowDown"
+    },
+
+    // Reading controls
+    {
+      id: "toggle-fullscreen",
+      category: "Reading controls",
+      description: "Toggle fullscreen reader",
+      context: "reader",
+      contextLabel: "Reader view",
+      displayKeyCombinations: [
+        { keys: ["F"] }
+      ],
+      matches: (e) => !e.shiftKey && (e.key === "f" || e.key === "F")
+    },
+    {
+      id: "toggle-bookmark",
+      category: "Reading controls",
+      description: "Toggle chapter bookmark",
+      context: "reader",
+      contextLabel: "Reader view",
+      displayKeyCombinations: [
+        { keys: ["B"] }
+      ],
+      matches: (e) => !e.shiftKey && (e.key === "b" || e.key === "B")
+    },
+    {
+      id: "toggle-read-status",
+      category: "Reading controls",
+      description: "Toggle chapter Read / Unread status",
+      context: "reader",
+      contextLabel: "Reader view",
+      displayKeyCombinations: [
+        { keys: ["Shift", "R"], separator: "+" }
+      ],
+      matches: (e) => e.shiftKey && (e.key === "R" || e.key === "r")
+    },
+    {
+      id: "toggle-reading-mode",
+      category: "Reading controls",
+      description: "Toggle Spaced / Seamless reading mode",
+      context: "reader",
+      contextLabel: "Reader view",
+      displayKeyCombinations: [
+        { keys: ["Shift", "S"], separator: "+" }
+      ],
+      matches: (e) => e.shiftKey && (e.key === "S" || e.key === "s" || e.code === "KeyS")
+    },
+
+    // Zoom and screenshots
+    {
+      id: "zoom-in",
+      category: "Zoom and screenshots",
+      description: "Zoom in by 10% (up to 300%)",
+      context: "reader",
+      contextLabel: "Reader view",
+      displayKeyCombinations: [
+        { keys: ["="] },
+        { keys: ["+"] }
+      ],
+      matches: (e) => (
+        (e.key === "=" || e.key === "+") ||
+        e.key === "Add" ||
+        e.code === "Equal" ||
+        e.code === "NumpadAdd" ||
+        e.code === "NumpadEqual" ||
+        e.keyCode === 187 ||
+        e.keyCode === 61 ||
+        e.keyCode === 107 ||
+        e.which === 187 ||
+        e.which === 61 ||
+        e.which === 107
+      )
+    },
+    {
+      id: "zoom-out",
+      category: "Zoom and screenshots",
+      description: "Zoom out by 10% (down to 50%)",
+      context: "reader",
+      contextLabel: "Reader view",
+      displayKeyCombinations: [
+        { keys: ["-"] }
+      ],
+      matches: (e) => (
+        (e.key === "-" || e.key === "_") ||
+        e.key === "Subtract" ||
+        e.code === "Minus" ||
+        e.code === "NumpadSubtract" ||
+        e.keyCode === 189 ||
+        e.keyCode === 173 ||
+        e.keyCode === 109 ||
+        e.which === 189 ||
+        e.which === 173 ||
+        e.which === 109
+      )
+    },
+    {
+      id: "zoom-reset",
+      category: "Zoom and screenshots",
+      description: "Reset zoom to 100%",
+      context: "reader",
+      contextLabel: "Reader view",
+      displayKeyCombinations: [
+        { keys: ["0"] }
+      ],
+      matches: (e) => (
+        !e.shiftKey &&
+        (
+          e.key === "0" ||
+          e.code === "Digit0" ||
+          e.code === "Numpad0" ||
+          e.keyCode === 48 ||
+          e.keyCode === 96 ||
+          e.which === 48 ||
+          e.which === 96
+        )
+      )
+    },
+    {
+      id: "save-screenshot",
+      category: "Zoom and screenshots",
+      description: "Save currently displayed page screenshot",
+      context: "reader",
+      contextLabel: "Reader view",
+      displayKeyCombinations: [
+        { keys: ["S"] }
+      ],
+      matches: (e) => !e.shiftKey && (e.key === "s" || e.key === "S")
+    }
+  ];
+
+  function getCurrentViewName() {
+    if (viewReader && !viewReader.classList.contains("hidden")) return "reader";
+    if (viewChapters && !viewChapters.classList.contains("hidden")) return "chapters";
+    return "library";
+  }
+
+  function renderShortcutsOverlay() {
+    if (!modalShortcutsBody) return;
+    const currentView = getCurrentViewName();
+    modalShortcutsBody.innerHTML = "";
+
+    const categories = [];
+    const categoryMap = new Map();
+
+    KEYBOARD_SHORTCUTS.forEach((item) => {
+      if (!categoryMap.has(item.category)) {
+        categoryMap.set(item.category, []);
+        categories.push(item.category);
+      }
+      categoryMap.get(item.category).push(item);
+    });
+
+    categories.forEach((catName) => {
+      const items = categoryMap.get(catName);
+      const groupEl = document.createElement("div");
+      groupEl.className = "shortcuts-group";
+
+      const isCategoryActive = items.some((it) => {
+        if (it.context === "all") return true;
+        if (it.context === "reader" && currentView === "reader") return true;
+        if (it.context === "library_or_series" && (currentView === "library" || currentView === "chapters")) return true;
+        return it.context === currentView;
+      });
+
+      if (isCategoryActive) {
+        groupEl.classList.add("active-context");
+      }
+
+      const headerEl = document.createElement("div");
+      headerEl.className = "shortcuts-group-header";
+
+      const titleEl = document.createElement("h3");
+      titleEl.className = "shortcuts-group-title";
+      titleEl.textContent = catName;
+
+      const sampleItem = items[0];
+      const allSameContext = items.every((it) => it.contextLabel === sampleItem.contextLabel);
+      if (allSameContext && sampleItem.contextLabel) {
+        const badgeEl = document.createElement("span");
+        badgeEl.className = "shortcuts-group-context";
+        badgeEl.textContent = sampleItem.contextLabel;
+        headerEl.appendChild(titleEl);
+        headerEl.appendChild(badgeEl);
+      } else {
+        headerEl.appendChild(titleEl);
+      }
+
+      groupEl.appendChild(headerEl);
+
+      items.forEach((item) => {
+        const rowEl = document.createElement("div");
+        rowEl.className = "shortcut-row";
+        rowEl.dataset.shortcutId = item.id;
+
+        const isItemActive = (
+          item.context === "all" ||
+          (item.context === "reader" && currentView === "reader") ||
+          (item.context === "library_or_series" && (currentView === "library" || currentView === "chapters")) ||
+          item.context === currentView
+        );
+
+        if (isItemActive) {
+          rowEl.classList.add("active-context");
+        }
+
+        const descEl = document.createElement("span");
+        descEl.className = "shortcut-desc";
+        descEl.textContent = item.description;
+
+        const keysEl = document.createElement("span");
+        keysEl.className = "shortcut-keys";
+
+        item.displayKeyCombinations.forEach((combo, comboIdx) => {
+          if (comboIdx > 0) {
+            const orEl = document.createElement("span");
+            orEl.className = "shortcut-key-or";
+            orEl.textContent = "/";
+            keysEl.appendChild(orEl);
+          }
+
+          combo.keys.forEach((k, kIdx) => {
+            if (kIdx > 0) {
+              const sepEl = document.createElement("span");
+              sepEl.className = "shortcut-key-separator";
+              sepEl.textContent = combo.separator || "+";
+              keysEl.appendChild(sepEl);
+            }
+            const kbd = document.createElement("kbd");
+            kbd.className = "shortcut-keycap";
+            kbd.textContent = k;
+            keysEl.appendChild(kbd);
+          });
+        });
+
+        rowEl.appendChild(descEl);
+        rowEl.appendChild(keysEl);
+        groupEl.appendChild(rowEl);
+      });
+
+      modalShortcutsBody.appendChild(groupEl);
+    });
+  }
+
+  function openShortcutsModal() {
+    toggleProfileDropdown(false);
+    if (modalProfile) modalProfile.classList.add("hidden");
+    if (modalSettings) modalSettings.classList.add("hidden");
+    if (modalRemote) modalRemote.classList.add("hidden");
+
+    previouslyFocusedElement = document.activeElement;
+
+    renderShortcutsOverlay();
+
+    if (modalOverlay) modalOverlay.classList.remove("hidden");
+    if (modalShortcuts) {
+      modalShortcuts.classList.remove("hidden");
+      if (btnCloseShortcutsModal) {
+        btnCloseShortcutsModal.focus();
+      } else {
+        modalShortcuts.focus();
+      }
+    }
+  }
+
+  function closeShortcutsModal() {
+    if (modalShortcuts) {
+      modalShortcuts.classList.add("hidden");
+    }
+    if (modalOverlay) {
+      modalOverlay.classList.add("hidden");
+    }
+    if (previouslyFocusedElement && typeof previouslyFocusedElement.focus === "function") {
+      try {
+        previouslyFocusedElement.focus();
+      } catch {}
+      previouslyFocusedElement = null;
+    }
+  }
+
+  function toggleShortcutsModal() {
+    if (modalShortcuts && !modalShortcuts.classList.contains("hidden")) {
+      closeShortcutsModal();
+    } else {
+      openShortcutsModal();
+    }
   }
 
   // Remote Series State & Modal Helpers
@@ -2096,13 +2499,86 @@ document.addEventListener("DOMContentLoaded", () => {
         if (settingsLibraryPath) {
           settingsLibraryPath.textContent = data.library_path;
         }
+        if (inputLibraryPath) {
+          inputLibraryPath.value = data.library_path;
+        }
+        if (Array.isArray(data.pinned)) {
+          pinnedSeriesSet = new Set(data.pinned);
+        }
         await loadLibrary();
+        closeAllModals();
       }
     } catch (err) {
       showError(`Error changing manga folder: ${err.message}`);
     } finally {
       if (btnChangeFolder) btnChangeFolder.disabled = false;
       if (btnReconnectFolder) btnReconnectFolder.disabled = false;
+    }
+  }
+
+  // Action: Apply Editable Manga Library Path
+  async function applyManualLibraryPath() {
+    if (!inputLibraryPath) return;
+    const rawVal = inputLibraryPath.value;
+    const trimmedPath = rawVal ? rawVal.trim() : "";
+
+    if (!trimmedPath) {
+      showLibraryPathError("Please enter a library folder path");
+      inputLibraryPath.focus();
+      return;
+    }
+
+    // Reject URLs upfront on client
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmedPath)) {
+      showLibraryPathError("URLs cannot be used as library paths. Please enter a local filesystem directory.");
+      inputLibraryPath.focus();
+      return;
+    }
+
+    hideLibraryPathError();
+
+    if (btnApplyLibraryPath) btnApplyLibraryPath.disabled = true;
+    if (btnChangeFolder) btnChangeFolder.disabled = true;
+
+    try {
+      const res = await fetch("/api/library", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: trimmedPath })
+      });
+
+      if (!res.ok) {
+        let errMsg = `Failed to switch library (${res.status})`;
+        try {
+          const errJson = await res.json();
+          if (errJson && errJson.error) errMsg = errJson.error;
+        } catch {}
+        showLibraryPathError(errMsg);
+        return;
+      }
+
+      const data = await res.json();
+      if (data.success) {
+        showSuccess(`Manga folder updated: ${data.library_path}`);
+        if (settingsLibraryPath) {
+          settingsLibraryPath.textContent = data.library_path;
+        }
+        if (inputLibraryPath) {
+          inputLibraryPath.value = data.library_path;
+        }
+        if (Array.isArray(data.pinned)) {
+          pinnedSeriesSet = new Set(data.pinned);
+        }
+        await loadLibrary();
+        closeAllModals();
+      } else {
+        showLibraryPathError(data.message || "Failed to switch library");
+      }
+    } catch (err) {
+      showLibraryPathError(`Error switching manga folder: ${err.message}`);
+    } finally {
+      if (btnApplyLibraryPath) btnApplyLibraryPath.disabled = false;
+      if (btnChangeFolder) btnChangeFolder.disabled = false;
     }
   }
 
@@ -2144,6 +2620,15 @@ document.addEventListener("DOMContentLoaded", () => {
         libraryUnavailable.classList.add("hidden");
       }
 
+      if (data.library_path) {
+        if (settingsLibraryPath) {
+          settingsLibraryPath.textContent = data.library_path;
+        }
+        if (inputLibraryPath && !inputLibraryPath.matches(":focus")) {
+          inputLibraryPath.value = data.library_path;
+        }
+      }
+
       allSeriesList = data.series || [];
       if (Array.isArray(data.pinned)) {
         pinnedSeriesSet = new Set(data.pinned);
@@ -2157,28 +2642,6 @@ document.addEventListener("DOMContentLoaded", () => {
             }
           }
         } catch {}
-      }
-
-      // Merge any pinned remote series that are not in local allSeriesList
-      for (const pinnedId of pinnedSeriesSet) {
-        if (!allSeriesList.some((s) => s.name === pinnedId)) {
-          const recentList = getRecentRemoteSeries();
-          const recentItem = recentList.find((item) => item && item.id === pinnedId);
-          const remoteTitle = (recentItem && recentItem.title && !recentItem.title.startsWith("remote:"))
-            ? recentItem.title
-            : pinnedId;
-          const remoteCard = {
-            name: pinnedId,
-            displayName: remoteTitle,
-            chapter_count: (recentItem && typeof recentItem.pageCount === "number")
-              ? recentItem.pageCount
-              : (recentItem && Array.isArray(recentItem.chapters) ? recentItem.chapters.length : 1),
-            has_cover: Boolean(recentItem && recentItem.cover_url),
-            cover_url: (recentItem && recentItem.cover_url) ? recentItem.cover_url : null,
-            isRemote: true
-          };
-          allSeriesList.push(remoteCard);
-        }
       }
 
       allSeriesList.forEach((s) => {
@@ -3743,6 +4206,43 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
+    // Toggle Keyboard Shortcuts Overlay (global shortcut: Shift + / or ?)
+    const isShortcutsShortcut = (
+      e.key === "?" ||
+      (e.shiftKey && (e.key === "/" || e.code === "Slash"))
+    );
+
+    if (isShortcutsShortcut) {
+      e.preventDefault();
+      toggleShortcutsModal();
+      return;
+    }
+
+    // Modal trap / suppression: do not handle background shortcuts when modal is open
+    if (modalShortcuts && !modalShortcuts.classList.contains("hidden")) {
+      if (e.key === "Tab") {
+        const focusables = Array.from(modalShortcuts.querySelectorAll(
+          'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        ));
+        if (focusables.length > 0) {
+          const first = focusables[0];
+          const last = focusables[focusables.length - 1];
+          if (e.shiftKey && (document.activeElement === first || !modalShortcuts.contains(document.activeElement))) {
+            e.preventDefault();
+            last.focus();
+          } else if (!e.shiftKey && (document.activeElement === last || !modalShortcuts.contains(document.activeElement))) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      }
+      return;
+    }
+
+    if (modalOverlay && !modalOverlay.classList.contains("hidden")) {
+      return;
+    }
+
     // Only active when Reader View is open
     if (viewReader.classList.contains("hidden")) {
       return;
@@ -3973,12 +4473,35 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  // Change library folder buttons
+  // Change library folder buttons & editable path form
   if (btnChangeFolder) {
     btnChangeFolder.addEventListener("click", changeMangaFolder);
   }
   if (btnReconnectFolder) {
     btnReconnectFolder.addEventListener("click", changeMangaFolder);
+  }
+  if (formLibraryPath) {
+    formLibraryPath.addEventListener("submit", (e) => {
+      e.preventDefault();
+      applyManualLibraryPath();
+    });
+  }
+  if (btnApplyLibraryPath) {
+    btnApplyLibraryPath.addEventListener("click", (e) => {
+      e.preventDefault();
+      applyManualLibraryPath();
+    });
+  }
+  if (inputLibraryPath) {
+    inputLibraryPath.addEventListener("input", () => {
+      hideLibraryPathError();
+    });
+    inputLibraryPath.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        applyManualLibraryPath();
+      }
+    });
   }
 
   // Profile Header Control & Dropdown Events
@@ -4017,11 +4540,31 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  if (dropdownItemShortcuts) {
+    dropdownItemShortcuts.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openShortcutsModal();
+    });
+  }
+
   // Modal Backdrop & Close Events
   if (modalOverlay) {
     modalOverlay.addEventListener("click", () => {
       closeAllModals();
     });
+  }
+
+  if (modalShortcuts) {
+    modalShortcuts.addEventListener("click", (e) => {
+      e.stopPropagation();
+    });
+  }
+
+  if (btnCloseShortcutsModal) {
+    btnCloseShortcutsModal.addEventListener("click", closeAllModals);
+  }
+  if (btnCloseShortcuts) {
+    btnCloseShortcuts.addEventListener("click", closeAllModals);
   }
 
   if (btnCloseProfileModal) {
@@ -4150,7 +4693,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.key === "Escape") {
       if (profileDropdown && !profileDropdown.classList.contains("hidden")) {
         toggleProfileDropdown(false);
-      } else if (modalOverlay && !modalOverlay.classList.contains("hidden")) {
+      } else if ((modalOverlay && !modalOverlay.classList.contains("hidden")) || (modalShortcuts && !modalShortcuts.classList.contains("hidden"))) {
         closeAllModals();
       }
     }
@@ -4179,6 +4722,18 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
     } catch {}
+  }
+
+  // Expose helpers for external inspection and test harness
+  if (typeof window !== "undefined") {
+    window.KEYBOARD_SHORTCUTS = KEYBOARD_SHORTCUTS;
+    window.openShortcutsModal = openShortcutsModal;
+    window.closeShortcutsModal = closeShortcutsModal;
+    window.toggleShortcutsModal = toggleShortcutsModal;
+    window.renderShortcutsOverlay = renderShortcutsOverlay;
+    window.applyManualLibraryPath = applyManualLibraryPath;
+    window.showLibraryPathError = showLibraryPathError;
+    window.hideLibraryPathError = hideLibraryPathError;
   }
 
   // Initial load

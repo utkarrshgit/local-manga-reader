@@ -19,6 +19,7 @@ from server import (
     toggle_pin_series,
     load_app_settings,
     save_app_settings,
+    canonicalize_library_path,
 )
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 from providers.service import RemoteReaderService
@@ -662,8 +663,10 @@ class TestReadingStateSemantics(unittest.TestCase):
         # Verify disk persistence in settings.json
         settings_file = self.config_dir / "settings.json"
         disk = json.loads(settings_file.read_text(encoding="utf-8"))
-        self.assertIn("TestManga", disk["pinned"])
-        self.assertIn("remote:mock:sololeveling", disk["pinned"])
+        canon_path = canonicalize_library_path(self.manga_dir)
+        disk_pins = disk.get("pinned_by_library", {}).get(canon_path, []) if "pinned_by_library" in disk else disk.get("pinned", [])
+        self.assertIn("TestManga", disk_pins)
+        self.assertIn("remote:mock:sololeveling", disk_pins)
 
     def test_req_2_and_3_partitioning_no_duplicates_and_hidden_when_empty(self):
         """Req 2 & 3: Pinned series are partitioned from unpinned series (no duplicates), hidden when empty."""

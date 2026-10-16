@@ -203,14 +203,18 @@ local-manga-reader/
 ├── start-linux.sh                # Linux shell launcher (zenity/kdialog/CLI folder picker, browser launch)
 ├── start-windows.bat             # Windows batch launcher (PowerShell folder picker, browser launch)
 │
-└── tests/                        # Automated test suite package
+└── tests/                        # Automated test suite package (427 tests across 11 modules)
     ├── __init__.py               # Test package initialization
-    ├── test_server.py            # 120 tests: Server, MangaLibrary, archives, user profile, themes, launchers
+    ├── test_server.py            # 129 tests: Server, MangaLibrary, archives, user profile, themes, launchers
     ├── test_remote_providers.py  # 61 tests: Cache LRU/TTL, connection-level SSRF, registry, models, security
-    ├── test_remote_reader.py     # 39 tests: Remote reader flow, progress, bookmarks, cache, local independence
-    ├── test_remote_ui_integration.py # 27 tests: UI contracts, HTML escaping, mock sockets, series switching
+    ├── test_remote_reader.py     # 41 tests: Remote reader flow, progress, bookmarks, cache, local independence
     ├── test_weebcentral_provider.py # 39 tests: WeebCentral HTML parsing, chapter titles, service integration
     ├── test_nhentai_provider.py  # 36 tests: nhentai API/HTML parsing, ordered pages, format maps, security
+    ├── test_remote_ui_integration.py # 27 tests: UI contracts, HTML escaping, mock sockets, series switching
+    ├── test_keyboard_shortcuts.py # 25 tests: Overlay cleanup, registry integrity, reader shortcuts, context styling
+    ├── test_reading_state_semantics.py # 22 tests: Chapter completion semantics, unread preservation, state persistence
+    ├── test_editable_library_path.py # 20 tests: Editable library path field, server validation, error handling, pin isolation
+    ├── test_per_library_pins.py  # 14 tests: Per-library pin scoping, legacy migration, CLI --dir isolation
     └── test_cli_remote_url.py    # 13 tests: CLI remote URL argument handling, startup routing, error sanitization
 ```
 
@@ -412,14 +416,12 @@ Images are loaded lazily in reading order inside `.reader-page` containers:
 
 | Key | Action |
 | :--- | :--- |
-| `Left Arrow` / `Page Up` | Navigate to previous chapter |
-| `Right Arrow` / `Page Down` | Navigate to next chapter |
-| `Up Arrow` | Scroll up through the current chapter |
-| `Down Arrow` | Scroll down through the current chapter |
+| `Left Arrow` | Navigate to previous chapter |
+| `Right Arrow` | Navigate to next chapter |
+| `Up Arrow` | Scroll up smoothly through the current chapter (hold for continuous scrolling) |
+| `Down Arrow` | Scroll down smoothly through the current chapter (hold for continuous scrolling) |
 | `Shift + Up Arrow` | Jump to the top of the chapter |
 | `Shift + Down Arrow` | Jump to the bottom of the chapter |
-| `Home` | Scroll to top of chapter |
-| `End` | Scroll to bottom of chapter |
 | `F` | Toggle fullscreen mode |
 | `B` | Toggle chapter bookmark |
 | `Shift + R` | Toggle chapter Read / Unread status |
@@ -428,7 +430,23 @@ Images are loaded lazily in reading order inside `.reader-page` containers:
 | `=` | Zoom in manga pages by 10% (50%–300% range, temporary) |
 | `-` | Zoom out manga pages by 10% (50%–300% range, temporary) |
 | `0` | Reset zoom to 100% (temporary) |
+| `Shift + /` / `?` | Toggle keyboard shortcuts reference overlay (global across library, series, reader) |
 | `Escape` | Exit fullscreen / close modal / return to series view |
+
+### Keyboard Shortcuts Reference Overlay
+The application provides an interactive, modal keyboard shortcuts cheat-sheet overlay (`#shortcutsModal`):
+- **Invocation**: Openable globally from any view (library, series detail, and reader) via `Shift + /` or `?`, or through the "Keyboard Shortcuts" item in the top-right profile dropdown.
+- **Single Source of Truth**: Rendered dynamically from the `KEYBOARD_SHORTCUTS` registry in `static/app.js`, organized strictly into three functional reader categories:
+  1. **Reader navigation**: Previous/next chapter navigation (`Left Arrow`, `Right Arrow`), smooth vertical scrolling (`Up Arrow`, `Down Arrow`), and top/bottom chapter jumps (`Shift + Up Arrow`, `Shift + Down Arrow`).
+  2. **Reading controls**: Fullscreen toggle (`F`), chapter bookmark (`B`), read/unread toggle (`Shift + R`), and spaced/seamless layout toggle (`Shift + S`).
+  3. **Zoom and screenshots**: Temporary zoom in (`=`), zoom out (`-`), zoom reset (`0`), and page screenshot capture (`S`).
+- **Cleaned Registry Structure**: The redundant General navigation category and its entries (`toggle-shortcuts`, `dismiss-modal`, `activate-item`) have been eliminated from both the registry and overlay UI. No red active-context highlighting or category emphasis remains for general navigation.
+- **Context-Aware Visual Feedback**:
+  - In the reader view, the active category header is subtly highlighted with the active theme's accent color (Crimson red or Kuromi purple).
+  - In non-reader views (library and series detail), shortcuts render in the neutral dark palette.
+- **Dismissal & Accessibility**:
+  - Closed via `Escape` key, clicking the close button (`.btn-close`), or clicking outside the modal dialog onto the backdrop overlay.
+  - Traps and handles focus cleanly, preserving underlying view state on close.
 
 > **Temporary Manga Reader Zoom Rules**:
 > - Zoom range: **50% to 300%** with a **100%** default, adjusting in 10 percentage point steps.
@@ -451,6 +469,55 @@ Images are loaded lazily in reading order inside `.reader-page` containers:
 | **Remote State** (`remote_reader_data.json`) | `~/Library/Application Support/LocalMangaReader/remote_reader_data.json` | `~/.config/LocalMangaReader/remote_reader_data.json` | `%LOCALAPPDATA%\LocalMangaReader\remote_reader_data.json` |
 | **Local State** (`reader_data.json`) | `<Manga_Library>/<Series>/.reader/reader_data.json` | `<Manga_Library>/<Series>/.reader/reader_data.json` | `<Manga_Library>/<Series>/.reader/reader_data.json` |
 | **Recent Remotes** (`localStorage`) | Browser LocalStorage (`local_manga_recent_remote`) | Browser LocalStorage (`local_manga_recent_remote`) | Browser LocalStorage (`local_manga_recent_remote`) |
+
+### Per-Library Pin Persistence (`pinned_by_library`)
+Pinned series are persisted independently for each manga library in `settings.json` under the `pinned_by_library` dictionary:
+- **Canonical Key Architecture**: Keys in `pinned_by_library` are canonical, normalized absolute filesystem paths computed via `Path.expanduser().resolve()`. This ensures consistent lookup regardless of redundant separators, relative path markers (`.`, `..`), or platform path differences.
+- **Data Model**:
+  ```json
+  {
+    "theme": "crimson",
+    "library_path": "/Users/user/Manga",
+    "pinned_by_library": {
+      "/Users/user/Manga": ["Berserk", "Vinland Saga"],
+      "/Volumes/External/Archive": ["Chainsaw Man"]
+    }
+  }
+  ```
+- **Backward-Compatible Idempotent Migration**:
+  - Legacy configurations storing a global `"pinned": [...]` list are automatically migrated on startup.
+  - If a default library path is configured, the legacy pins are mapped to `pinned_by_library[canonical_library_path]` and the top-level `"pinned"` key is safely retired from disk.
+  - If no default library is configured at startup, the legacy `"pinned"` key is preserved without destructive data loss.
+  - The migration is strictly idempotent: subsequent startups or reloads never re-migrate, duplicate, or overwrite pins.
+  - Unrelated settings (theme, library path, window state) are preserved intact.
+- **Collection Isolation**:
+  - Pinning or unpinning in Library A modifies only Library A's pin list.
+  - Switching to Library B loads only Library B's pin list; an empty pin list for one library never modifies or clears other libraries.
+  - The frontend derives the Pinned section strictly from series physically present in the active collection (`allSeriesList`). Non-local or stale pins are never rendered in the UI.
+- **CLI `--dir` Temporary Override Invariant**:
+  - Launching the server with `--dir <path>` activates a temporary library override for that execution session only.
+  - Pin and unpin operations performed during that session are scoped to `pinned_by_library[canonical_temp_path]`.
+  - The saved default `library_path` in `settings.json` is strictly protected and never modified by temporary `--dir` operations.
+
+### Editable Library Path & Switching Mechanics
+The application provides an editable filesystem path input in the Settings modal (`#modal-settings`):
+- **User Interface**: Contains a text input (`#input-library-path`), an explicit Apply button (`#btn-apply-library-path`), and an inline error display (`#library-path-error`), alongside the existing native folder browsing control (`#btn-change-folder`).
+- **Interaction Flow**:
+  1. Opening Settings populates `#input-library-path` with the currently active library's full filesystem path and clears any prior error.
+  2. The user can type, paste, or edit the path and apply it via the Apply button or by pressing `Enter`.
+  3. The client disables submit controls during request flight to prevent duplicate submissions.
+  4. On success: refreshes the library view, updates displayed path indicators, loads the target library's scoped pins, closes the modal, and shows a success notification.
+  5. On error: displays a clear inline error message near the input, keeps the modal open for correction, and preserves the active library and saved settings intact.
+- **Server Validation & Security**:
+  - Reject URLs upfront (protocols like `http://`, `https://`, `ftp://` are rejected with HTTP 400).
+  - Paths are normalized via `canonicalize_library_path()` (`Path(p).expanduser().resolve()`), handling tildes, relative segments (`..`, `.`), redundant slashes, and spaces.
+  - Rejects missing paths with descriptive "Directory does not exist" messages.
+  - Rejects file paths with "Path is a file, not a directory" messages.
+  - Gracefully handles inaccessible paths (`PermissionError`) and filesystem errors without leaking internal tracebacks.
+  - Switches `MangaRequestHandler.library` in memory and updates persisted `library_path` in `settings.json` only after validation succeeds.
+- **Per-Library Pin Scoping**:
+  - On a successful switch, `POST /api/library` returns the newly active library's pins from `pinned_by_library`.
+  - Pins are never merged across collections; returning to a previous library restores its isolated pins.
 
 ### Environment Overrides for Testing
 Configuration and state locations can be overridden via environment variables:
@@ -524,12 +591,12 @@ python3 server.py --help
 | `GET` | `/api/status` | Server readiness check & startup state | None | `{ "status": "online", "app": "Local Manga Reader (Phase 6)", "library_path": "...", "library_exists": bool, "startup_url": str\|null, "endpoints": [...] }` |
 | `GET` | `/api/settings` | Retrieve theme settings | None | `{ "theme": "crimson"\|"kuromi", "library_path": "..." }` |
 | `POST` | `/api/settings` | Update theme preference | `{"theme": "crimson"\|"kuromi"}` | `{ "success": true, "theme": "..." }` |
-| `GET` | `/api/library` | Active local library status | None | `{ "library_path": str\|null, "library_exists": bool, "series_count": int }` |
-| `POST` | `/api/library` | Switch active local library | `{"action": "select"}` or `{"path": "/..."}` | `{ "success": true, "library_path": "...", "library_exists": bool, "series_count": int }` |
+| `GET` | `/api/library` | Active local library status & pins | None | `{ "library_path": str\|null, "library_exists": bool, "series_count": int, "pinned": [...] }` |
+| `POST` | `/api/library` | Switch active local library | `{"action": "select"}` or `{"path": "/..."}` | `{ "success": true, "library_path": "...", "library_exists": bool, "series_count": int, "pinned": [...] }` |
 | `GET` | `/api/profile` | Retrieve local user profile | None | `{ "name": str, "has_avatar": bool, "avatar_url": str\|null }` |
 | `POST` | `/api/profile` | Update profile name or avatar | `{"name": str, "avatar": "data:image/...", "remove_avatar": bool}` | Updated profile object |
-| `GET` | `/api/pin`, `/api/pinned` | Retrieve list of pinned series | None | `{ "pinned": ["Series A", ...] }` |
-| `POST` | `/api/pin` | Pin or unpin a series | `{"series": "...", "pinned": bool}` (optional bool) | `{ "success": true, "pinned": bool, "pinned_series": [...] }` |
+| `GET` | `/api/pin`, `/api/pinned` | Retrieve pinned series for active library | None | `{ "pinned": ["Series A", ...] }` |
+| `POST` | `/api/pin` | Pin or unpin series in active library | `{"series": "...", "pinned": bool}` (optional bool) | `{ "success": true, "pinned": bool, "pinned_series": [...] }` |
 | `POST` | `/api/screenshot` | Save manga page screenshot | `{"series": "...", "chapter": "...", "image": "...", "provider": "..."}` | `{ "success": true, "path": "...", "filename": "..." }` |
 
 ### 2. Remote Reading Endpoints (`/api/remote/*`)
@@ -599,27 +666,31 @@ The following endpoints accept either local series names (e.g. `Berserk`) or rem
 ## 14. Testing Suite & Verification Procedures
 
 ### Test Suite Structure
-The test suite consists of **387 automated tests** organized across 9 modules:
+The test suite consists of **427 automated tests** organized across 11 modules:
 
 | Test Module | Tests | Focus Area |
 | :--- | :--- | :--- |
 | `tests/test_server.py` | 129 | Core HTTP server, `MangaLibrary`, natural sorting, archive discovery (`.cbz`/`.zip`), user profile, appearance/themes, library resolution, platform launchers, pin API, and screenshot saving. |
 | `tests/test_remote_providers.py` | 61 | `ChapterPageCache` LRU/TTL bounds and counter accounting, connection-level SSRF transport, `MockProvider`, `ProviderRegistry`, normalized models, security IP/domain validation. |
 | `tests/test_remote_reader.py` | 41 | End-to-end remote reader flow, progress/bookmark/style persistence, cache hit/miss behavior, graceful error handling, local reading regression independence. |
-| `tests/test_remote_ui_integration.py` | 27 | UI contracts, DOM safety, HTML escaping of untrusted titles, mock socket HTTP simulation, switching between local and remote series. |
 | `tests/test_weebcentral_provider.py` | 39 | WeebCentral HTML parsing, chapter title cleaning (excluding 'Last Read' badges and `<time>` tags), dynamic image endpoint fallback, service and HTTP integration. |
 | `tests/test_nhentai_provider.py` | 36 | nhentai API v2 & HTML scraper, ordered page generation, format mapping, domain allowlist enforcement, regression safety. |
-| `tests/test_cli_remote_url.py` | 13 | CLI remote URL argument handling, startup routing, error sanitization, launcher suppression of duplicate browser opens. |
+| `tests/test_remote_ui_integration.py` | 27 | UI contracts, DOM safety, HTML escaping of untrusted titles, mock socket HTTP simulation, switching between local and remote series. |
+| `tests/test_keyboard_shortcuts.py` | 25 | Overlay cleanup (General navigation removal), registry integrity, context highlighting, reader shortcuts (`=`, `-`, `0`, `Shift+R`, `S`), continuous held-arrow scrolling, reader header layout. |
 | `tests/test_reading_state_semantics.py` | 22 | Explicit vs natural chapter completion semantics, unread preservation during navigation and progress updates, local and remote state persistence. |
-| `tests/test_keyboard_shortcuts.py` | 19 | Reader keyboard shortcuts (`=`, `-`, `0`, `Shift+R`, `S`), continuous held-arrow scrolling, reader header fixed translucent layout, series title viewport centering, Chapters button fullscreen exit. |
+| `tests/test_editable_library_path.py` | 20 | Editable library path UI, server validation, URL and file rejection, permission error handling, pin list isolation across switches, and theme compatibility. |
+| `tests/test_per_library_pins.py` | 14 | Scoped per-library pins, canonical path normalization, safe idempotent legacy migration, CLI `--dir` isolation, UI switching isolation, relative/equivalent path resolution. |
+| `tests/test_cli_remote_url.py` | 13 | CLI remote URL argument handling, startup routing, error sanitization, launcher suppression of duplicate browser opens. |
 
 ### Running the Test Suite
 
 ```bash
-# Run the entire test suite (all 387 tests)
+# Run the entire test suite (all 427 tests)
 python3 -m unittest discover -s tests -p "test_*.py" -v
 
 # Run a specific test module
+python3 -m unittest tests.test_editable_library_path
+python3 -m unittest tests.test_per_library_pins
 python3 -m unittest tests.test_keyboard_shortcuts
 python3 -m unittest tests.test_reading_state_semantics
 python3 -m unittest tests.test_cli_remote_url
@@ -627,6 +698,8 @@ python3 -m unittest tests.test_weebcentral_provider
 python3 -m unittest tests.test_nhentai_provider
 
 # Alternatively, run a test module by file path
+python3 -m unittest tests/test_editable_library_path.py
+python3 -m unittest tests/test_per_library_pins.py
 python3 -m unittest tests/test_server.py
 python3 -m unittest tests/test_keyboard_shortcuts.py
 
@@ -671,7 +744,9 @@ bash -n start-linux.sh
 - [x] Temporary reader zoom (`=`, `-`, `0` reset) across 50% to 300% range without persistent storage mutation.
 - [x] Smooth continuous scrolling via held Up/Down arrow keys.
 - [x] Fixed translucent reader header with backdrop blur and Chapters button navigation.
-- [x] Pinned manga library organization with persistent `pinned` series in `settings.json`.
+- [x] Per-library pinned series scoped by canonical path (`pinned_by_library`) with idempotent legacy migration and CLI `--dir` isolation.
+- [x] Editable library path field in Settings modal with server validation, error handling, and per-library pin isolation.
+- [x] Keyboard shortcuts reference overlay (`Shift + /` / `?`) with context-aware reader categories (Reader navigation, Reading controls, Zoom/screenshot) and clean dismissal.
 - [x] Viewport-centered series page header title with responsive truncation.
 - [x] Cover and hero background fallback hierarchies.
 - [x] Editorial dark UI with Crimson and Kuromi dual themes.
@@ -686,7 +761,7 @@ bash -n start-linux.sh
 - [x] Remote browsing modal with collapsible provider disclosure and recent series manager.
 - [x] CLI remote URL launch support with automatic browser opening.
 - [x] Cross-platform launcher scripts (`start-mac.command`, `start-linux.sh`, `start-windows.bat`).
-- [x] Complete test suite with 387 passing unit and integration tests.
+- [x] Complete test suite with 427 passing unit and integration tests across 11 modules.
 
 ### Source-Dependent / Live Network Limitations
 - **Live Upstream Site Availability**: WeebCentral and nhentai providers connect to live third-party websites. Changes to upstream markup or anti-bot Cloudflare challenges (HTTP 403 / 503) can block requests during live execution, even though unit tests pass with offline fixtures.
@@ -734,7 +809,7 @@ When extending or maintaining this project, future developers and coding agents 
 5. **Always Sanitize User & Remote Strings**:
    Remote titles, chapter names, authors, and synopses are untrusted external data. Use `textContent` or escape HTML before inserting into the DOM to prevent XSS.
 6. **Maintain Complete Test Coverage**:
-   Any new endpoint, provider, or CLI feature must include regression tests. Ensure all 387 tests pass before finishing any task:
+   Any new endpoint, provider, or CLI feature must include regression tests. Ensure all 427 tests pass before finishing any task:
    ```bash
    python3 -m unittest discover -s tests -p "test_*.py" -v
    ```

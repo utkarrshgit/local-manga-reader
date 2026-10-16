@@ -2829,9 +2829,91 @@ body.in-fullscreen .reader-progress-container {
   white-space: pre-wrap;
 }
 
+.settings-path-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.settings-path-field-label {
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.settings-path-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.settings-path-input {
+  flex: 1;
+  font-family: monospace;
+  font-size: 0.80rem;
+  background-color: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  color: var(--text);
+  padding: 7px 10px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  min-width: 0;
+}
+
+.settings-path-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+}
+
+.settings-path-input.input-error {
+  border-color: #ff5252;
+  box-shadow: 0 0 0 2px rgba(255, 82, 82, 0.2);
+}
+
+.btn-apply-path {
+  padding: 6px 14px;
+  font-size: 0.80rem;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.settings-path-error {
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
+  color: #ff5252;
+  background-color: rgba(255, 82, 82, 0.1);
+  border: 1px solid rgba(255, 82, 82, 0.25);
+  border-radius: var(--radius-xs);
+  padding: 7px 11px;
+  line-height: 1.35;
+  word-break: break-word;
+  animation: fadeIn 0.15s ease-in-out;
+}
+
 .settings-actions {
   display: flex;
-  margin-top: 4px;
+  margin-top: 2px;
+}
+
+@media (max-width: 480px) {
+  .settings-path-input-group {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .btn-apply-path {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 /* =========================================
@@ -3770,5 +3852,208 @@ body.in-fullscreen .reader-progress-container {
 
 .chapter-item.chapter-completed:hover {
   opacity: 1;
+}
+
+/* =========================================
+   Keyboard Shortcuts Reference Overlay
+   ========================================= */
+.app-modal-shortcuts {
+  max-width: 560px;
+  width: calc(100% - 32px);
+}
+
+.modal-header-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.modal-subtitle {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.3;
+  margin: 0;
+}
+
+.modal-shortcuts-body {
+  max-height: min(65vh, 480px);
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  overscroll-behavior: contain;
+}
+
+.shortcuts-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.shortcuts-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 2px;
+}
+
+.shortcuts-group-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.shortcuts-group.active-context .shortcuts-group-title {
+  color: var(--accent);
+}
+
+.shortcuts-group-context {
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  background-color: var(--surface-hover);
+  padding: 2px 7px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-subtle);
+}
+
+.shortcuts-group.active-context .shortcuts-group-context {
+  color: var(--text);
+  border-color: var(--accent-border);
+  background-color: var(--accent-subtle);
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 8px;
+  border-radius: var(--radius-xs);
+  border-left: 2px solid transparent;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.shortcut-row:hover {
+  background-color: var(--surface-hover);
+}
+
+.shortcut-row.active-context {
+  background-color: var(--accent-subtle);
+  border-left-color: var(--accent);
+}
+
+.shortcut-desc {
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+.shortcut-row:hover .shortcut-desc,
+.shortcut-row.active-context .shortcut-desc {
+  color: var(--text);
+}
+
+.shortcut-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.shortcut-keycap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text);
+  background-color: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-bottom: 2px solid var(--border);
+  border-radius: var(--radius-xs);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  line-height: 1;
+  user-select: none;
+}
+
+.shortcut-keycap-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  font-family: var(--font-sans);
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background-color: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  line-height: 1;
+}
+
+.shortcut-key-separator {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  user-select: none;
+}
+
+.shortcut-key-or {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin: 0 2px;
+  user-select: none;
+}
+
+.modal-shortcuts-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+}
+
+.modal-shortcuts-hint {
+  display: flex;
+  align-items: center;
+}
+
+.shortcuts-hint-text {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+@media (max-width: 480px) {
+  .app-modal-shortcuts {
+    width: calc(100% - 20px);
+  }
+  .modal-shortcuts-body {
+    max-height: calc(85vh - 120px);
+    padding: 12px 14px;
+    gap: 14px;
+  }
+  .shortcut-row {
+    padding: 5px 6px;
+    gap: 10px;
+  }
+  .shortcut-desc {
+    font-size: 0.78rem;
+  }
+  .modal-shortcuts-hint {
+    display: none;
+  }
 }
 

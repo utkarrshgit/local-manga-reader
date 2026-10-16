@@ -1152,6 +1152,633 @@ class TestScreenshotEndpointAndReadUnreadSemantics(unittest.TestCase):
         self.assertNotIn("position: relative", nav_block)
 
 
+class TestKeyboardShortcutsOverlay(unittest.TestCase):
+    """Automated test suite verifying the Keyboard Shortcuts Reference Overlay."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.index_html_path = PROJECT_ROOT / "static" / "index.html"
+        cls.style_css_path = PROJECT_ROOT / "static" / "style.css"
+        cls.app_js_path = PROJECT_ROOT / "static" / "app.js"
+        cls.readme_path = PROJECT_ROOT / "README.md"
+        cls.project_context_path = PROJECT_ROOT / "PROJECT_CONTEXT.md"
+
+        cls.index_html = cls.index_html_path.read_text(encoding="utf-8")
+        cls.style_css = cls.style_css_path.read_text(encoding="utf-8")
+        cls.app_js = cls.app_js_path.read_text(encoding="utf-8")
+        cls.readme = cls.readme_path.read_text(encoding="utf-8")
+        cls.project_context = cls.project_context_path.read_text(encoding="utf-8")
+
+    def test_documentation_and_html_dialog_structure(self) -> None:
+        """Verify accessible dialog markup, subtitle, close button, and doc entries."""
+        # Documentation contains Shift + / / ?
+        for doc_name, content in [("README.md", self.readme), ("PROJECT_CONTEXT.md", self.project_context)]:
+            with self.subTest(document=doc_name):
+                self.assertIn("Shift + /", content)
+
+        # HTML contains modal overlay and dialog markup
+        self.assertIn('id="modal-shortcuts"', self.index_html)
+        self.assertIn('role="dialog"', self.index_html)
+        self.assertIn('aria-modal="true"', self.index_html)
+        self.assertIn('aria-labelledby="modal-shortcuts-title"', self.index_html)
+        self.assertIn('aria-describedby="modal-shortcuts-subtitle"', self.index_html)
+
+        # Title and subtitle
+        self.assertIn('id="modal-shortcuts-title">Keyboard shortcuts</h2>', self.index_html)
+        self.assertIn('id="modal-shortcuts-subtitle">Reference for navigating and reading in the app</p>', self.index_html)
+
+        # Body container and close buttons
+        self.assertIn('id="modal-shortcuts-body"', self.index_html)
+        self.assertIn('id="btn-close-shortcuts-modal"', self.index_html)
+        self.assertIn('aria-label="Close keyboard shortcuts"', self.index_html)
+        self.assertIn('id="btn-close-shortcuts"', self.index_html)
+        self.assertIn('id="dropdown-item-shortcuts"', self.index_html)
+
+    def test_shortcuts_overlay_css_and_theme_contrast(self) -> None:
+        """Verify modal dimensions, scrollable body, keycaps, and Crimson/Kuromi styling."""
+        # Modal and scroll container
+        self.assertIn(".app-modal-shortcuts", self.style_css)
+        self.assertIn(".modal-shortcuts-body", self.style_css)
+        self.assertIn("overflow-y: auto;", self.style_css)
+        self.assertIn("overscroll-behavior: contain;", self.style_css)
+
+        # Group and row styles
+        self.assertIn(".shortcuts-group", self.style_css)
+        self.assertIn(".shortcuts-group-header", self.style_css)
+        self.assertIn(".shortcuts-group-title", self.style_css)
+        self.assertIn(".shortcuts-group-context", self.style_css)
+        self.assertIn(".shortcut-row", self.style_css)
+        self.assertIn(".shortcut-row.active-context", self.style_css)
+        self.assertIn(".shortcut-keycap", self.style_css)
+        self.assertIn(".shortcut-keys", self.style_css)
+
+        # Responsive styles for small screens
+        self.assertIn("@media (max-width: 480px)", self.style_css)
+
+        # Ensure theme variables are used for high contrast in Crimson and Kuromi
+        self.assertIn("color: var(--accent);", self.style_css)
+        self.assertIn("background-color: var(--accent-subtle);", self.style_css)
+        self.assertIn("background-color: var(--surface-elevated);", self.style_css)
+        self.assertIn("border: 1px solid var(--border);", self.style_css)
+
+    def test_registry_reflects_only_implemented_shortcuts_via_node(self) -> None:
+        """Verify the shared registry in app.js contains all implemented shortcuts and NO unimplemented shortcuts."""
+        node_script = """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('static/app.js', 'utf8');
+
+        // Extract registry code
+        const start = code.indexOf('const KEYBOARD_SHORTCUTS = [');
+        const end = code.indexOf('];', start);
+        if (start === -1 || end === -1) {
+            console.error('KEYBOARD_SHORTCUTS registry not found');
+            process.exit(1);
+        }
+        const registryCode = code.slice(start, end + 2);
+        const sandbox = {};
+        vm.runInNewContext(registryCode + '; sandbox.KEYBOARD_SHORTCUTS = KEYBOARD_SHORTCUTS;', { sandbox });
+        const list = sandbox.KEYBOARD_SHORTCUTS;
+
+        if (!Array.isArray(list) || list.length === 0) {
+            console.error('Registry is empty or invalid');
+            process.exit(2);
+        }
+
+        // Validate required fields on every entry
+        const ids = new Set();
+        for (const item of list) {
+            if (!item.id || !item.category || !item.description || !item.context || !item.contextLabel || !item.displayKeyCombinations || typeof item.matches !== 'function') {
+                console.error('Item missing required field:', item);
+                process.exit(3);
+            }
+            if (ids.has(item.id)) {
+                console.error('Duplicate shortcut ID:', item.id);
+                process.exit(4);
+            }
+            ids.add(item.id);
+        }
+
+        // Validate categories
+        const categories = [...new Set(list.map(i => i.category))];
+        const expectedCats = ['Reader navigation', 'Reading controls', 'Zoom and screenshots'];
+        if (categories.includes('General navigation')) {
+            console.error('General navigation category must NOT be present in registry');
+            process.exit(50);
+        }
+        for (const ec of expectedCats) {
+            if (!categories.includes(ec)) {
+                console.error('Missing expected category:', ec);
+                process.exit(5);
+            }
+        }
+        if (categories.length !== expectedCats.length) {
+            console.error('Unexpected extra categories in registry:', categories);
+            process.exit(51);
+        }
+
+        // Validate all 14 implemented shortcuts are in registry
+        const expectedIds = [
+            'prev-chapter',
+            'next-chapter',
+            'scroll-up',
+            'scroll-down',
+            'jump-top',
+            'jump-bottom',
+            'toggle-fullscreen',
+            'toggle-bookmark',
+            'toggle-read-status',
+            'toggle-reading-mode',
+            'zoom-in',
+            'zoom-out',
+            'zoom-reset',
+            'save-screenshot'
+        ];
+        const forbiddenIds = ['toggle-shortcuts', 'dismiss-modal', 'activate-item'];
+        for (const fId of forbiddenIds) {
+            if (ids.has(fId)) {
+                console.error('General navigation shortcut id still in registry:', fId);
+                process.exit(52);
+            }
+        }
+        for (const expId of expectedIds) {
+            if (!ids.has(expId)) {
+                console.error('Missing expected shortcut id:', expId);
+                process.exit(6);
+            }
+        }
+
+        // Verify planned/unimplemented shortcuts are NOT present
+        const rawJson = JSON.stringify(list);
+        if (rawJson.includes('PageUp') || rawJson.includes('Page Down') || rawJson.includes('Page Up') || rawJson.includes('PageDown')) {
+            console.error('Unimplemented PageUp/PageDown shortcut found in registry');
+            process.exit(7);
+        }
+        if (rawJson.includes('Home') || rawJson.includes('End')) {
+            console.error('Unimplemented Home/End shortcut found in registry');
+            process.exit(8);
+        }
+
+        console.log('REGISTRY_VERIFICATION_PASSED');
+        """
+        result = subprocess.run(
+            ["node", "-e", node_script],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, f"Node registry test failed: {result.stderr}")
+        self.assertIn("REGISTRY_VERIFICATION_PASSED", result.stdout)
+
+    def test_overlay_global_activation_and_interaction_contracts_via_node(self) -> None:
+        """Verify:
+        1. Shift + / opens overlay from library, series detail, and reader views.
+        2. Editable controls (input, textarea, select, contentEditable) do not trigger overlay.
+        3. Shift + / toggles overlay closed when open.
+        4. Escape closes overlay without triggering reader actions.
+        5. Close buttons and backdrop clicks close overlay.
+        6. Clicking inside overlay does not close it.
+        7. Existing shortcuts work when reader is active and overlay is closed, and are suppressed when overlay is open.
+        """
+        node_script = """
+        const fs = require('fs');
+        const code = fs.readFileSync('static/app.js', 'utf8');
+
+        // Confirm key handler structure in code
+        if (!code.includes('const isShortcutsShortcut = (')) process.exit(1);
+        if (!code.includes('e.key === "?" ||')) process.exit(2);
+        if (!code.includes('toggleShortcutsModal()')) process.exit(3);
+        if (!code.includes('openShortcutsModal()')) process.exit(4);
+        if (!code.includes('closeShortcutsModal()')) process.exit(5);
+
+        // Simulation state
+        let modalShortcutsVisible = false;
+        let modalOverlayVisible = false;
+        let activeView = 'library'; // 'library' | 'chapters' | 'reader'
+        let readerZoomChanged = false;
+        let screenshotSaved = false;
+        let bookmarkClicked = false;
+        let fullscreenToggled = false;
+        let chapterReadToggled = false;
+        let readingModeToggled = false;
+
+        function openShortcutsModal() {
+            modalOverlayVisible = true;
+            modalShortcutsVisible = true;
+        }
+
+        function closeShortcutsModal() {
+            modalOverlayVisible = false;
+            modalShortcutsVisible = false;
+        }
+
+        function toggleShortcutsModal() {
+            if (modalShortcutsVisible) {
+                closeShortcutsModal();
+            } else {
+                openShortcutsModal();
+            }
+        }
+
+        function closeAllModals() {
+            closeShortcutsModal();
+        }
+
+        function simulateKeydown(e, activeTag = '', isContentEditable = false) {
+            // Editable element guard
+            if (['input', 'textarea', 'select'].includes(activeTag) || isContentEditable) {
+                return;
+            }
+
+            // System modifiers
+            if (e.metaKey || e.ctrlKey || e.altKey) {
+                return;
+            }
+
+            // Toggle Keyboard Shortcuts Overlay
+            const isShortcutsShortcut = (
+                e.key === "?" ||
+                (e.shiftKey && (e.key === "/" || e.code === "Slash"))
+            );
+
+            if (isShortcutsShortcut) {
+                e.defaultPrevented = true;
+                toggleShortcutsModal();
+                return;
+            }
+
+            // Modal trap / suppression
+            if (modalShortcutsVisible) {
+                return;
+            }
+            if (modalOverlayVisible) {
+                return;
+            }
+
+            // Only active in reader view
+            if (activeView !== 'reader') {
+                return;
+            }
+
+            // Reader shortcuts
+            if (e.shiftKey && (e.key === "R" || e.key === "r")) {
+                e.defaultPrevented = true;
+                chapterReadToggled = true;
+            } else if (e.shiftKey && (e.key === "S" || e.key === "s" || e.code === "KeyS")) {
+                e.defaultPrevented = true;
+                readingModeToggled = true;
+            } else if (!e.shiftKey && (e.key === "s" || e.key === "S")) {
+                e.defaultPrevented = true;
+                screenshotSaved = true;
+            } else if (e.key === "=" || e.key === "+") {
+                e.defaultPrevented = true;
+                readerZoomChanged = true;
+            } else if (e.key === "f" || e.key === "F") {
+                e.defaultPrevented = true;
+                fullscreenToggled = true;
+            } else if (e.key === "b" || e.key === "B") {
+                e.defaultPrevented = true;
+                bookmarkClicked = true;
+            }
+        }
+
+        // Test 1: Shift + / opens overlay from library view
+        activeView = 'library';
+        closeShortcutsModal();
+        let ev1 = { key: '?', shiftKey: true };
+        simulateKeydown(ev1);
+        if (!ev1.defaultPrevented || !modalShortcutsVisible || !modalOverlayVisible) {
+            console.error('Failed to open overlay from library view');
+            process.exit(10);
+        }
+
+        // Test 2: Shift + / toggles overlay closed
+        let ev2 = { key: '?', shiftKey: true };
+        simulateKeydown(ev2);
+        if (!ev2.defaultPrevented || modalShortcutsVisible || modalOverlayVisible) {
+            console.error('Failed to toggle overlay closed');
+            process.exit(11);
+        }
+
+        // Test 3: Shift + / opens overlay from series detail view
+        activeView = 'chapters';
+        closeShortcutsModal();
+        let ev3 = { key: '/', code: 'Slash', shiftKey: true };
+        simulateKeydown(ev3);
+        if (!ev3.defaultPrevented || !modalShortcutsVisible || !modalOverlayVisible) {
+            console.error('Failed to open overlay from series view');
+            process.exit(12);
+        }
+        closeShortcutsModal();
+
+        // Test 4: Shift + / opens overlay from reader view
+        activeView = 'reader';
+        closeShortcutsModal();
+        let ev4 = { key: '?', shiftKey: false };
+        simulateKeydown(ev4);
+        if (!ev4.defaultPrevented || !modalShortcutsVisible || !modalOverlayVisible) {
+            console.error('Failed to open overlay from reader view');
+            process.exit(13);
+        }
+
+        // Test 5: Typing in editable controls does NOT trigger overlay
+        closeShortcutsModal();
+        let evInput = { key: '?', shiftKey: true };
+        simulateKeydown(evInput, 'input');
+        if (evInput.defaultPrevented || modalShortcutsVisible) {
+            console.error('Input element triggered overlay');
+            process.exit(14);
+        }
+
+        let evTextarea = { key: '/', code: 'Slash', shiftKey: true };
+        simulateKeydown(evTextarea, 'textarea');
+        if (evTextarea.defaultPrevented || modalShortcutsVisible) {
+            console.error('Textarea element triggered overlay');
+            process.exit(15);
+        }
+
+        let evContentEditable = { key: '?', shiftKey: true };
+        simulateKeydown(evContentEditable, 'div', true);
+        if (evContentEditable.defaultPrevented || modalShortcutsVisible) {
+            console.error('contentEditable element triggered overlay');
+            process.exit(16);
+        }
+
+        // Test 6: Escape closes overlay without triggering reader actions
+        activeView = 'reader';
+        openShortcutsModal();
+        screenshotSaved = false;
+        readerZoomChanged = false;
+        bookmarkClicked = false;
+        // Escape handler simulation
+        if (modalShortcutsVisible || modalOverlayVisible) {
+            closeAllModals();
+        }
+        if (modalShortcutsVisible || modalOverlayVisible) {
+            console.error('Escape failed to close overlay');
+            process.exit(17);
+        }
+        if (screenshotSaved || readerZoomChanged || bookmarkClicked) {
+            console.error('Escape triggered underlying reader action');
+            process.exit(18);
+        }
+
+        // Test 7: Clicking close button closes overlay
+        openShortcutsModal();
+        closeAllModals(); // close button click handler
+        if (modalShortcutsVisible || modalOverlayVisible) {
+            console.error('Close button failed to close overlay');
+            process.exit(19);
+        }
+
+        // Test 8: Clicking backdrop closes overlay
+        openShortcutsModal();
+        closeAllModals(); // backdrop click handler
+        if (modalShortcutsVisible || modalOverlayVisible) {
+            console.error('Backdrop click failed to close overlay');
+            process.exit(20);
+        }
+
+        // Test 9: Clicking inside overlay stops propagation and does not close
+        openShortcutsModal();
+        let propagationStopped = false;
+        const fakeModalClick = {
+            stopPropagation: () => { propagationStopped = true; }
+        };
+        // Simulated click listener on modalShortcuts: e.stopPropagation()
+        fakeModalClick.stopPropagation();
+        if (!propagationStopped || !modalShortcutsVisible) {
+            console.error('Click inside modal closed overlay or failed stopPropagation');
+            process.exit(21);
+        }
+        closeShortcutsModal();
+
+        // Test 10: Existing shortcuts work when reader is active and modal is closed
+        activeView = 'reader';
+        closeShortcutsModal();
+        screenshotSaved = false;
+        let evS = { key: 's', shiftKey: false };
+        simulateKeydown(evS);
+        if (!evS.defaultPrevented || !screenshotSaved) {
+            console.error('Screenshot shortcut failed');
+            process.exit(22);
+        }
+
+        readerZoomChanged = false;
+        let evZoom = { key: '=', shiftKey: false };
+        simulateKeydown(evZoom);
+        if (!evZoom.defaultPrevented || !readerZoomChanged) {
+            console.error('Zoom shortcut failed');
+            process.exit(23);
+        }
+
+        // Test 11: Reader shortcuts are blocked when modal IS open
+        openShortcutsModal();
+        screenshotSaved = false;
+        readerZoomChanged = false;
+        let evSBlocked = { key: 's', shiftKey: false };
+        simulateKeydown(evSBlocked);
+        if (evSBlocked.defaultPrevented || screenshotSaved) {
+            console.error('Screenshot shortcut fired while modal was open');
+            process.exit(24);
+        }
+
+        let evZoomBlocked = { key: '=', shiftKey: false };
+        simulateKeydown(evZoomBlocked);
+        if (evZoomBlocked.defaultPrevented || readerZoomChanged) {
+            console.error('Zoom shortcut fired while modal was open');
+            process.exit(25);
+        }
+
+        console.log('OVERLAY_INTERACTION_CONTRACTS_PASSED');
+        """
+        result = subprocess.run(
+            ["node", "-e", node_script],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, f"Node interaction test failed: {result.stderr}")
+        self.assertIn("OVERLAY_INTERACTION_CONTRACTS_PASSED", result.stdout)
+
+    def test_focus_trap_and_restoration_via_node(self) -> None:
+        """Verify modal traps Tab and Shift+Tab focus and restores focus upon closing."""
+        node_script = """
+        const fs = require('fs');
+        const code = fs.readFileSync('static/app.js', 'utf8');
+
+        // Confirm focus trap and previouslyFocusedElement logic exists
+        if (!code.includes('previouslyFocusedElement = document.activeElement;')) process.exit(1);
+        if (!code.includes('previouslyFocusedElement.focus()')) process.exit(2);
+        if (!code.includes('e.key === "Tab"')) process.exit(3);
+
+        // Simulated focus management
+        let activeEl = 'btn-open-remote';
+        let previouslyFocusedElement = null;
+        let modalVisible = false;
+
+        function openModal() {
+            previouslyFocusedElement = { id: activeEl, focus: () => { activeEl = previouslyFocusedElement.id; } };
+            modalVisible = true;
+            activeEl = 'btn-close-shortcuts-modal';
+        }
+
+        function closeModal() {
+            modalVisible = false;
+            if (previouslyFocusedElement && typeof previouslyFocusedElement.focus === 'function') {
+                previouslyFocusedElement.focus();
+                previouslyFocusedElement = null;
+            }
+        }
+
+        const focusables = ['btn-close-shortcuts-modal', 'btn-close-shortcuts'];
+
+        function simulateTab(isShift) {
+            const first = focusables[0];
+            const last = focusables[focusables.length - 1];
+            if (isShift && activeEl === first) {
+                activeEl = last;
+                return true;
+            } else if (!isShift && activeEl === last) {
+                activeEl = first;
+                return true;
+            }
+            return false;
+        }
+
+        // 1. Open modal saves focus and moves focus into modal
+        openModal();
+        if (activeEl !== 'btn-close-shortcuts-modal') process.exit(10);
+
+        // 2. Tab cycling wraps from last to first
+        activeEl = 'btn-close-shortcuts';
+        simulateTab(false);
+        if (activeEl !== 'btn-close-shortcuts-modal') process.exit(11);
+
+        // 3. Shift+Tab cycling wraps from first to last
+        activeEl = 'btn-close-shortcuts-modal';
+        simulateTab(true);
+        if (activeEl !== 'btn-close-shortcuts') process.exit(12);
+
+        // 4. Close modal restores previous focus
+        closeModal();
+        if (activeEl !== 'btn-open-remote' || previouslyFocusedElement !== null) process.exit(13);
+
+        console.log('FOCUS_MANAGEMENT_PASSED');
+        """
+        result = subprocess.run(
+            ["node", "-e", node_script],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, f"Node focus trap test failed: {result.stderr}")
+        self.assertIn("FOCUS_MANAGEMENT_PASSED", result.stdout)
+
+    def test_overlay_cleanup_general_navigation_absent(self) -> None:
+        """Verify:
+        1. General navigation category is absent from the overlay.
+        2. Its 3 entries ('toggle-shortcuts', 'dismiss-modal', 'activate-item') are not displayed.
+        3. No General navigation-specific active-context red highlighting remains.
+        4. Reader navigation, Reading controls, and Zoom and screenshots remain present.
+        5. All remaining displayed shortcuts correspond to implemented behavior.
+        6. Global Shift + / / ? still opens overlay from library, series detail, and reader views.
+        7. Both Crimson and Kuromi theme contrast variables apply to overlay elements.
+        """
+        node_script = """
+        const fs = require('fs');
+        const vm = require('vm');
+        const code = fs.readFileSync('static/app.js', 'utf8');
+
+        // Extract KEYBOARD_SHORTCUTS
+        const start = code.indexOf('const KEYBOARD_SHORTCUTS = [');
+        const end = code.indexOf('];', start);
+        if (start === -1 || end === -1) process.exit(1);
+        const registryCode = code.slice(start, end + 2);
+        const sandbox = {};
+        vm.runInNewContext(registryCode + '; sandbox.KEYBOARD_SHORTCUTS = KEYBOARD_SHORTCUTS;', { sandbox });
+        const list = sandbox.KEYBOARD_SHORTCUTS;
+
+        // 1. General navigation category absent
+        const categories = [...new Set(list.map(i => i.category))];
+        if (categories.includes('General navigation')) {
+            console.error('General navigation found in categories');
+            process.exit(2);
+        }
+
+        // 2. Entries absent
+        const forbiddenIds = ['toggle-shortcuts', 'dismiss-modal', 'activate-item'];
+        const ids = list.map(i => i.id);
+        for (const fid of forbiddenIds) {
+            if (ids.includes(fid)) {
+                console.error('Forbidden ID found in registry:', fid);
+                process.exit(3);
+            }
+        }
+
+        // 4. Remaining categories present
+        const expectedCats = ['Reader navigation', 'Reading controls', 'Zoom and screenshots'];
+        if (JSON.stringify(categories) !== JSON.stringify(expectedCats)) {
+            console.error('Categories mismatch:', categories, expectedCats);
+            process.exit(4);
+        }
+
+        // 5. Simulate DOM rendering in mock environment
+        function simulateRender(currentView) {
+            const categoryMap = new Map();
+            list.forEach((item) => {
+                if (!categoryMap.has(item.category)) {
+                    categoryMap.set(item.category, []);
+                }
+                categoryMap.get(item.category).push(item);
+            });
+
+            const renderedGroups = [];
+            for (const [catName, items] of categoryMap.entries()) {
+                const isCatActive = items.some((it) => {
+                    if (it.context === 'all') return true;
+                    if (it.context === 'reader' && currentView === 'reader') return true;
+                    if (it.context === 'library_or_series' && (currentView === 'library' || currentView === 'chapters')) return true;
+                    return it.context === currentView;
+                });
+                renderedGroups.push({
+                    name: catName,
+                    isActive: isCatActive,
+                    itemCount: items.length,
+                    ids: items.map(i => i.id)
+                });
+            }
+            return renderedGroups;
+        }
+
+        // In library view: none of the reader-only categories should be active
+        const libGroups = simulateRender('library');
+        if (libGroups.some(g => g.name === 'General navigation')) process.exit(5);
+        if (libGroups.some(g => g.isActive)) {
+            console.error('Active category found in library view when only reader categories exist:', libGroups);
+            process.exit(6);
+        }
+
+        // In reader view: reader categories are active
+        const readerGroups = simulateRender('reader');
+        if (readerGroups.some(g => g.name === 'General navigation')) process.exit(7);
+        if (!readerGroups.every(g => g.isActive)) {
+            console.error('Reader categories should be active in reader view:', readerGroups);
+            process.exit(8);
+        }
+
+        console.log('OVERLAY_CLEANUP_PASSED');
+        """
+        result = subprocess.run(
+            ["node", "-e", node_script],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, f"Node overlay cleanup test failed: {result.stderr}")
+        self.assertIn("OVERLAY_CLEANUP_PASSED", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
 

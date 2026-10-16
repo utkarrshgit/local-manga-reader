@@ -77,6 +77,13 @@
             </svg>
             <span>Open Remote Manga</span>
           </button>
+          <button type="button" class="profile-dropdown-item" id="dropdown-item-shortcuts" role="menuitem">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="2" y="4" width="20" height="16" rx="2" ry="2"/>
+              <path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M7 16h10"/>
+            </svg>
+            <span>Keyboard Shortcuts</span>
+          </button>
         </div>
       </div>
     </div>
@@ -575,12 +582,38 @@
             <span class="settings-path-label">Current Folder</span>
             <code class="settings-path-value" id="settings-library-path">Loading...</code>
           </div>
+
+          <form id="form-library-path" class="settings-path-form" onsubmit="return false;">
+            <label for="input-library-path" class="settings-path-field-label">Switch Library Folder</label>
+            <div class="settings-path-input-group">
+              <input
+                type="text"
+                id="input-library-path"
+                class="settings-path-input"
+                placeholder="e.g. /Users/name/Manga"
+                autocomplete="off"
+                spellcheck="false"
+                aria-label="Library directory path"
+                aria-describedby="library-path-error"
+              />
+              <button
+                type="submit"
+                id="btn-apply-library-path"
+                class="btn btn-primary btn-sm btn-apply-path"
+                aria-label="Apply library path"
+              >
+                Apply
+              </button>
+            </div>
+            <div id="library-path-error" class="settings-path-error hidden" role="alert" aria-live="polite"></div>
+          </form>
+
           <div class="settings-actions">
-            <button type="button" id="btn-change-folder" class="btn-change-folder" title="Change manga library folder" aria-label="Change manga folder">
+            <button type="button" id="btn-change-folder" class="btn-change-folder" title="Browse and choose manga library folder" aria-label="Browse folder">
               <svg class="folder-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
               </svg>
-              <span>Change folder</span>
+              <span>Browse folder</span>
             </button>
           </div>
         </div>
@@ -652,6 +685,32 @@
         <button type="button" class="btn btn-primary btn-sm" id="btn-load-remote">
           <span id="btn-load-remote-text">Open Series</span>
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Keyboard Shortcuts Modal -->
+  <div class="app-modal app-modal-shortcuts hidden" id="modal-shortcuts" role="dialog" aria-modal="true" aria-labelledby="modal-shortcuts-title" aria-describedby="modal-shortcuts-subtitle" tabindex="-1">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-header-titles">
+          <h2 class="modal-title" id="modal-shortcuts-title">Keyboard shortcuts</h2>
+          <p class="modal-subtitle" id="modal-shortcuts-subtitle">Reference for navigating and reading in the app</p>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-shortcuts-modal" aria-label="Close keyboard shortcuts">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6 6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body modal-shortcuts-body" id="modal-shortcuts-body" role="region" aria-label="Shortcuts list">
+        <!-- Rendered dynamically from KEYBOARD_SHORTCUTS registry -->
+      </div>
+      <div class="modal-footer modal-shortcuts-footer">
+        <div class="modal-shortcuts-hint">
+          <span class="shortcuts-hint-text">Press <kbd class="shortcut-keycap-hint">Shift</kbd> + <kbd class="shortcut-keycap-hint">/</kbd> or <kbd class="shortcut-keycap-hint">?</kbd> to toggle</span>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-close-shortcuts">Done</button>
       </div>
     </div>
   </div>
