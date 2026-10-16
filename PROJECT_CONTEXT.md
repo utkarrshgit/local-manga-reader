@@ -414,12 +414,28 @@ Images are loaded lazily in reading order inside `.reader-page` containers:
 | :--- | :--- |
 | `Left Arrow` / `Page Up` | Navigate to previous chapter |
 | `Right Arrow` / `Page Down` | Navigate to next chapter |
+| `Up Arrow` | Scroll up through the current chapter |
+| `Down Arrow` | Scroll down through the current chapter |
+| `Shift + Up Arrow` | Jump to the top of the chapter |
+| `Shift + Down Arrow` | Jump to the bottom of the chapter |
 | `Home` | Scroll to top of chapter |
 | `End` | Scroll to bottom of chapter |
 | `F` | Toggle fullscreen mode |
 | `B` | Toggle chapter bookmark |
-| `S` | Toggle reading style (Spaced ⟷ Seamless) |
+| `Shift + R` | Toggle chapter Read / Unread status |
+| `Shift + S` | Toggle Spaced / Seamless reading mode |
+| `S` | Save currently displayed page screenshot |
+| `=` | Zoom in manga pages by 10% (50%–300% range, temporary) |
+| `-` | Zoom out manga pages by 10% (50%–300% range, temporary) |
+| `0` | Reset zoom to 100% (temporary) |
 | `Escape` | Exit fullscreen / close modal / return to series view |
+
+> **Temporary Manga Reader Zoom Rules**:
+> - Zoom range: **50% to 300%** with a **100%** default, adjusting in 10 percentage point steps.
+> - Affects only manga page images within `.reader-container` via the `--reader-zoom` CSS custom property, preserving image aspect ratio and horizontal panning access.
+> - Controls, header, footer, and timeline remain unscaled and fully functional.
+> - Preserves current zoom level across entering/exiting fullscreen and toggling Spaced/Seamless reading modes.
+> - Strictly temporary and in-memory: resets to 100% on opening any chapter, navigating between chapters, or exiting reader view. Never persisted to `localStorage`, `reader_data.json`, or server configuration.
 
 ---
 
@@ -512,8 +528,9 @@ python3 server.py --help
 | `POST` | `/api/library` | Switch active local library | `{"action": "select"}` or `{"path": "/..."}` | `{ "success": true, "library_path": "...", "library_exists": bool, "series_count": int }` |
 | `GET` | `/api/profile` | Retrieve local user profile | None | `{ "name": str, "has_avatar": bool, "avatar_url": str\|null }` |
 | `POST` | `/api/profile` | Update profile name or avatar | `{"name": str, "avatar": "data:image/...", "remove_avatar": bool}` | Updated profile object |
-| `GET` | `/api/profile/avatar` | Stream avatar image | None | Binary image payload |
-| `DELETE` | `/api/profile/avatar` | Remove avatar image | None | `{ "success": true, "action": "removed", ... }` |
+| `GET` | `/api/pin`, `/api/pinned` | Retrieve list of pinned series | None | `{ "pinned": ["Series A", ...] }` |
+| `POST` | `/api/pin` | Pin or unpin a series | `{"series": "...", "pinned": bool}` (optional bool) | `{ "success": true, "pinned": bool, "pinned_series": [...] }` |
+| `POST` | `/api/screenshot` | Save manga page screenshot | `{"series": "...", "chapter": "...", "image": "...", "provider": "..."}` | `{ "success": true, "path": "...", "filename": "..." }` |
 
 ### 2. Remote Reading Endpoints (`/api/remote/*`)
 
@@ -531,6 +548,7 @@ python3 server.py --help
 | `POST` | `/api/remote/progress` | Body: `{"series": "...", "chapter": "...", "image": "..."}` | Updates reading progress for a remote series. |
 | `POST` | `/api/remote/bookmark` | Body: `{"series": "...", "chapter": "...", "bookmarked": bool}` | Toggles bookmark for a remote chapter. |
 | `POST` | `/api/remote/style` | Body: `{"series": "...", "style": "spaced"\|"seamless"}` | Updates reading style for a remote series. |
+| `POST` | `/api/remote/completed` | Body: `{"series": "...", "chapter": "...", "completed": bool}` | Toggles chapter Read/Unread state for remote series. |
 
 ### 3. Dual-Mode Unified Endpoints
 The following endpoints accept either local series names (e.g. `Berserk`) or remote identifiers (`remote:weebcentral:01J76XY8CM99` / `https://...`). The server automatically detects remote series via `is_remote_series()`:
@@ -545,6 +563,7 @@ The following endpoints accept either local series names (e.g. `Berserk`) or rem
 | `POST` | `/api/progress` | Writes to local `reader_data.json` | Writes to global `remote_reader_data.json` |
 | `POST` | `/api/bookmark` | Writes to local `reader_data.json` | Writes to global `remote_reader_data.json` |
 | `POST` | `/api/style` | Writes to local `reader_data.json` | Writes to global `remote_reader_data.json` |
+| `POST` | `/api/completed` | Writes to local `reader_data.json` | Writes to global `remote_reader_data.json` |
 | `POST` | `/api/cover` | Uploads `<Series>/cover.jpg` | **Rejected with 400 Bad Request** (remote metadata is read-only) |
 | `POST` | `/api/background` | Uploads `<Series>/background.jpg` | **Rejected with 400 Bad Request** (remote metadata is read-only) |
 
@@ -580,32 +599,36 @@ The following endpoints accept either local series names (e.g. `Berserk`) or rem
 ## 14. Testing Suite & Verification Procedures
 
 ### Test Suite Structure
-The test suite consists of **335 automated tests** organized across 7 modules:
+The test suite consists of **387 automated tests** organized across 9 modules:
 
 | Test Module | Tests | Focus Area |
 | :--- | :--- | :--- |
-| `tests/test_server.py` | 120 | Core HTTP server, `MangaLibrary`, natural sorting, archive discovery (`.cbz`/`.zip`), user profile, appearance/themes, library resolution, platform launchers. |
+| `tests/test_server.py` | 129 | Core HTTP server, `MangaLibrary`, natural sorting, archive discovery (`.cbz`/`.zip`), user profile, appearance/themes, library resolution, platform launchers, pin API, and screenshot saving. |
 | `tests/test_remote_providers.py` | 61 | `ChapterPageCache` LRU/TTL bounds and counter accounting, connection-level SSRF transport, `MockProvider`, `ProviderRegistry`, normalized models, security IP/domain validation. |
-| `tests/test_remote_reader.py` | 39 | End-to-end remote reader flow, progress/bookmark/style persistence, cache hit/miss behavior, graceful error handling, local reading regression independence. |
+| `tests/test_remote_reader.py` | 41 | End-to-end remote reader flow, progress/bookmark/style persistence, cache hit/miss behavior, graceful error handling, local reading regression independence. |
 | `tests/test_remote_ui_integration.py` | 27 | UI contracts, DOM safety, HTML escaping of untrusted titles, mock socket HTTP simulation, switching between local and remote series. |
 | `tests/test_weebcentral_provider.py` | 39 | WeebCentral HTML parsing, chapter title cleaning (excluding 'Last Read' badges and `<time>` tags), dynamic image endpoint fallback, service and HTTP integration. |
 | `tests/test_nhentai_provider.py` | 36 | nhentai API v2 & HTML scraper, ordered page generation, format mapping, domain allowlist enforcement, regression safety. |
 | `tests/test_cli_remote_url.py` | 13 | CLI remote URL argument handling, startup routing, error sanitization, launcher suppression of duplicate browser opens. |
+| `tests/test_reading_state_semantics.py` | 22 | Explicit vs natural chapter completion semantics, unread preservation during navigation and progress updates, local and remote state persistence. |
+| `tests/test_keyboard_shortcuts.py` | 19 | Reader keyboard shortcuts (`=`, `-`, `0`, `Shift+R`, `S`), continuous held-arrow scrolling, reader header fixed translucent layout, series title viewport centering, Chapters button fullscreen exit. |
 
 ### Running the Test Suite
 
 ```bash
-# Run the entire test suite (all 335 tests)
+# Run the entire test suite (all 387 tests)
 python3 -m unittest discover -s tests -p "test_*.py" -v
 
 # Run a specific test module
+python3 -m unittest tests.test_keyboard_shortcuts
+python3 -m unittest tests.test_reading_state_semantics
 python3 -m unittest tests.test_cli_remote_url
 python3 -m unittest tests.test_weebcentral_provider
 python3 -m unittest tests.test_nhentai_provider
 
 # Alternatively, run a test module by file path
 python3 -m unittest tests/test_server.py
-python3 -m unittest tests/test_cli_remote_url.py
+python3 -m unittest tests/test_keyboard_shortcuts.py
 
 # Validate client JavaScript syntax
 node -c static/app.js
@@ -639,10 +662,17 @@ bash -n start-linux.sh
 - [x] Zero-dependency Python 3 backend and vanilla ES6 frontend.
 - [x] Natural numerical sorting for series, chapters, and image filenames.
 - [x] Directory chapters + `.cbz` and `.zip` archive chapters with in-memory streaming.
-- [x] Continuous vertical reader with Spaced and Seamless modes.
+- [x] Continuous vertical reader with Spaced and Seamless modes (`Shift + S`).
 - [x] Segmented bottom progress timeline with hover preview and jump navigation.
 - [x] Auto-resuming reading progress via `IntersectionObserver`.
-- [x] Chapter bookmarking and series reading style preferences.
+- [x] Chapter bookmarking (`B`) and series reading style preferences.
+- [x] Read/Unread chapter completion toggle (`Shift + R`) with explicit unread persistence.
+- [x] Page screenshot capture (`S`) saving full-resolution images to `<Library>/Screenshots/<Series>/`.
+- [x] Temporary reader zoom (`=`, `-`, `0` reset) across 50% to 300% range without persistent storage mutation.
+- [x] Smooth continuous scrolling via held Up/Down arrow keys.
+- [x] Fixed translucent reader header with backdrop blur and Chapters button navigation.
+- [x] Pinned manga library organization with persistent `pinned` series in `settings.json`.
+- [x] Viewport-centered series page header title with responsive truncation.
 - [x] Cover and hero background fallback hierarchies.
 - [x] Editorial dark UI with Crimson and Kuromi dual themes.
 - [x] Local user profiles (display name and avatar image upload).
@@ -656,7 +686,7 @@ bash -n start-linux.sh
 - [x] Remote browsing modal with collapsible provider disclosure and recent series manager.
 - [x] CLI remote URL launch support with automatic browser opening.
 - [x] Cross-platform launcher scripts (`start-mac.command`, `start-linux.sh`, `start-windows.bat`).
-- [x] Complete test suite with 335 passing unit and integration tests.
+- [x] Complete test suite with 387 passing unit and integration tests.
 
 ### Source-Dependent / Live Network Limitations
 - **Live Upstream Site Availability**: WeebCentral and nhentai providers connect to live third-party websites. Changes to upstream markup or anti-bot Cloudflare challenges (HTTP 403 / 503) can block requests during live execution, even though unit tests pass with offline fixtures.
@@ -672,17 +702,19 @@ bash -n start-linux.sh
 
 ## 16. Known Limitations, Edge Cases & Operational Notes
 
-1. **Upstream Cloudflare Protection**:
+1. **Safari Fullscreen Scroll Restoration**:
+   When exiting fullscreen in Safari (macOS / WebKit), Safari's internal layout restoration can reset the scroll position to where you were before entering fullscreen mode. Chrome, Edge, and Firefox preserve the position properly. Complex browser-event interception workarounds have been deliberately avoided to maintain codebase simplicity and prevent event loop regressions.
+2. **Upstream Cloudflare Protection**:
    If an upstream provider (such as nhentai or WeebCentral) activates strict Cloudflare challenge pages (e.g. Under Attack Mode), requests will return HTTP 403 or 503. The server catches these and returns clean error messages rather than hanging.
-2. **WeebCentral Dynamic Images**:
+3. **WeebCentral Dynamic Images**:
    WeebCentral occasionally serves chapter pages via a secondary HTMX endpoint `/chapters/{id}/images`. The provider automatically detects empty `#chapter-images` containers and falls back to requesting this dynamic fragment.
-3. **nhentai Gallery Representation**:
+4. **nhentai Gallery Representation**:
    An nhentai gallery is modeled as a single `RemoteSeries` containing 1 `RemoteChapter`. Opening the series detail view shows this single chapter, which immediately opens into the reader.
-4. **Recent Remote Series Storage**:
+5. **Recent Remote Series Storage**:
    Recent remote items are stored in the user's browser `localStorage` (`local_manga_recent_remote`). Clearing browser site data will reset the recent series list in the modal (though server-side reading progress and bookmarks in `remote_reader_data.json` are retained).
-5. **Safari Favicon Caching**:
+6. **Safari Favicon Caching**:
    Safari aggressively caches favicons in `~/Library/Safari/Favicon Cache`. If a modified favicon does not display, clearing that folder and restarting Safari resolves the issue.
-6. **Archive File Corruption**:
+7. **Archive File Corruption**:
    Corrupt `.cbz` or `.zip` archives are safely caught by `zipfile.BadZipFile`, returning an empty list (`[]`) and displaying a disabled state in the UI rather than crashing the server.
 
 ---
@@ -702,7 +734,7 @@ When extending or maintaining this project, future developers and coding agents 
 5. **Always Sanitize User & Remote Strings**:
    Remote titles, chapter names, authors, and synopses are untrusted external data. Use `textContent` or escape HTML before inserting into the DOM to prevent XSS.
 6. **Maintain Complete Test Coverage**:
-   Any new endpoint, provider, or CLI feature must include regression tests. Ensure all 335 tests pass before finishing any task:
+   Any new endpoint, provider, or CLI feature must include regression tests. Ensure all 387 tests pass before finishing any task:
    ```bash
    python3 -m unittest discover -s tests -p "test_*.py" -v
    ```

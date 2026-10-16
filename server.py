@@ -537,6 +537,64 @@ def detect_image_format(data: bytes) -> str | None:
     return None
 
 
+def sanitize_path_component(name: str) -> str:
+    """Sanitizes a string for use as a directory or file name, avoiding path traversal."""
+    if not name:
+        return ""
+    # Strip path traversal and invalid filesystem characters
+    cleaned = re.sub(r'[/\\:*?"<>|\x00-\x1f]', "_", str(name))
+    cleaned = cleaned.strip(". \t\r\n")
+    cleaned = re.sub(r"_+", "_", cleaned)
+    return cleaned
+
+
+def pad_number_str(num_str: str, min_digits: int = 3) -> str:
+    """Zero-pads numeric string to at least min_digits."""
+    if not num_str:
+        return ""
+    if "." in num_str:
+        integer_part, decimal_part = num_str.split(".", 1)
+        try:
+            return f"{int(integer_part):0{min_digits}d}.{decimal_part}"
+        except ValueError:
+            return num_str
+    try:
+        return f"{int(num_str):0{min_digits}d}"
+    except ValueError:
+        return num_str
+
+
+def extract_chapter_number_str(chapter_name: str) -> str | None:
+    """Extracts and zero-pads chapter number from a chapter name/title."""
+    if not chapter_name:
+        return None
+    # 1. Match explicit chapter prefixes like Chapter 12, Ch. 12, Ep. 12, Vol 1 Ch 12
+    m = re.search(r"(?:chapter|ch\.?|ep\.?)\s*(\d+(?:\.\d+)?)", str(chapter_name), re.IGNORECASE)
+    if m:
+        return pad_number_str(m.group(1), 3)
+    # 2. Match standalone numbers
+    m = re.search(r"\b(\d+(?:\.\d+)?)\b", str(chapter_name))
+    if m:
+        return pad_number_str(m.group(1), 3)
+    return None
+
+
+def extract_page_number_str(filename_or_index: str | int | None) -> str | None:
+    """Extracts and zero-pads page number to at least 3 digits."""
+    if filename_or_index is None:
+        return None
+    if isinstance(filename_or_index, int):
+        return f"{filename_or_index:03d}"
+    s = str(filename_or_index).strip()
+    if s.isdigit():
+        return f"{int(s):03d}"
+    stem = Path(s).stem
+    m = re.search(r"(\d+)", stem)
+    if m:
+        return pad_number_str(m.group(1), 3)
+    return None
+
+
 class MangaLibrary:
     """Manages filesystem scanning and resolution of manga series, chapters, and images."""
 
@@ -597,6 +655,8 @@ class MangaLibrary:
         """
         if not self.root_path or not series_name or not chapter_name:
             return None
+        if series_name.strip().lower() == "screenshots":
+            return None
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
             return None
@@ -628,6 +688,8 @@ class MangaLibrary:
         series_list = []
         for entry in os.scandir(self.root_path):
             if entry.is_dir() and not entry.name.startswith("."):
+                if entry.name.strip().lower() == "screenshots":
+                    continue
                 try:
                     chapter_count = sum(
                         1 for ch in os.scandir(entry.path)
@@ -656,7 +718,9 @@ class MangaLibrary:
         Supports chapter subdirectories, .cbz files, and .zip files.
         Ignores hidden folders and files (starting with '.'), and unsupported loose files.
         """
-        if not self.root_path:
+        if not self.root_path or not series_name:
+            return []
+        if series_name.strip().lower() == "screenshots":
             return []
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
@@ -805,7 +869,9 @@ class MangaLibrary:
         2. First image of the first naturally sorted chapter (directory or archive)
         Returns None if no cover or chapter images exist.
         """
-        if not self.root_path:
+        if not self.root_path or not series_name:
+            return None
+        if series_name.strip().lower() == "screenshots":
             return None
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
@@ -835,7 +901,9 @@ class MangaLibrary:
         Resolves the cover image path for a series if located directly on disk as a file.
         Preserves backward compatibility for callers expecting a Path.
         """
-        if not self.root_path:
+        if not self.root_path or not series_name:
+            return None
+        if series_name.strip().lower() == "screenshots":
             return None
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
@@ -870,7 +938,9 @@ class MangaLibrary:
         3. First image of the first naturally sorted chapter (directory or archive)
         4. None if no image exists anywhere
         """
-        if not self.root_path:
+        if not self.root_path or not series_name:
+            return None
+        if series_name.strip().lower() == "screenshots":
             return None
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
@@ -1020,7 +1090,9 @@ class MangaLibrary:
         Returns default dict if file does not exist or is malformed.
         Returns None if series_name is invalid or unsafe.
         """
-        if not self.root_path:
+        if not self.root_path or not series_name:
+            return None
+        if series_name.strip().lower() == "screenshots":
             return None
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
@@ -1139,7 +1211,9 @@ class MangaLibrary:
         """
         Saves reader data for a series inside <Series>/.reader/reader_data.json.
         """
-        if not self.root_path:
+        if not self.root_path or not series_name:
+            return False
+        if series_name.strip().lower() == "screenshots":
             return False
         series_dir = self.root_path / series_name
         if not self._is_safe_child(series_dir) or not series_dir.is_dir():
@@ -1371,6 +1445,94 @@ class MangaLibrary:
             if self.save_reader_data(series_name, data):
                 return data
             return None
+
+    def save_screenshot(
+        self,
+        series_name: str,
+        chapter_name: str,
+        page_identifier: str,
+        image_bytes: bytes,
+        ext: str | None = None,
+        page_index: int | None = None,
+    ) -> dict | None:
+        """
+        Saves a page screenshot to <root>/Screenshots/<Series Name>/Chapter XXX - Page YYY.ext.
+        Uses atomic file creation, never overwrites, and handles incremental numbering.
+        """
+        if not self.exists() or not image_bytes:
+            return None
+
+        clean_series = sanitize_path_component(series_name)
+        if not clean_series:
+            clean_series = "Unknown Series"
+
+        screenshots_dir = self.root_path / "Screenshots"
+        series_dir = screenshots_dir / clean_series
+        if not self._is_safe_child(series_dir):
+            return None
+
+        # Determine extension
+        clean_ext = (ext or "").lstrip(".").lower()
+        if not clean_ext or clean_ext not in ("png", "jpg", "jpeg", "webp", "avif", "bmp", "gif"):
+            detected = detect_image_format(image_bytes)
+            if detected:
+                clean_ext = detected
+            elif not clean_ext:
+                clean_ext = "jpg"
+
+        # Format chapter part
+        ch_num = extract_chapter_number_str(chapter_name)
+        if ch_num:
+            ch_part = f"Chapter {ch_num}"
+        else:
+            clean_ch = sanitize_path_component(chapter_name)
+            ch_part = clean_ch if clean_ch else "Chapter 001"
+
+        # Format page part
+        pg_num = extract_page_number_str(page_identifier)
+        if not pg_num and page_index is not None:
+            pg_num = pad_number_str(str(page_index), 3)
+
+        if pg_num:
+            pg_part = f"Page {pg_num}"
+        else:
+            clean_pg = sanitize_path_component(Path(str(page_identifier)).stem)
+            pg_part = f"Page {clean_pg}" if clean_pg else "Page 001"
+
+        base_name = f"{ch_part} - {pg_part}"
+
+        with self._lock:
+            series_dir.mkdir(parents=True, exist_ok=True)
+            counter = 1
+            while True:
+                filename = f"{base_name}.{clean_ext}" if counter == 1 else f"{base_name} ({counter}).{clean_ext}"
+                target_path = series_dir / filename
+                if not self._is_safe_child(target_path):
+                    return None
+
+                try:
+                    # Atomic creation with O_CREAT | O_EXCL ensures no overwrite
+                    fd = os.open(target_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+                    try:
+                        with open(fd, "wb", closefd=True) as f:
+                            f.write(image_bytes)
+                    except Exception:
+                        try:
+                            target_path.unlink()
+                        except OSError:
+                            pass
+                        raise
+
+                    rel_path = str(target_path.relative_to(self.root_path))
+                    return {
+                        "success": True,
+                        "filename": filename,
+                        "path": str(target_path),
+                        "rel_path": rel_path,
+                        "series": clean_series,
+                    }
+                except FileExistsError:
+                    counter += 1
 
 
 class MangaRequestHandler(BaseHTTPRequestHandler):
@@ -2268,6 +2430,199 @@ class MangaRequestHandler(BaseHTTPRequestHandler):
                 "unread_chapters": data.get("unread", []),
                 "reader": data["reader"]
             })
+            return
+
+        # API: Save Manga Page Screenshot (/api/screenshot)
+        if path == "/api/screenshot":
+            body = self._read_json_body()
+            if not body or not isinstance(body, dict):
+                self._send_error("Invalid or missing JSON body", HTTPStatus.BAD_REQUEST)
+                return
+
+            series = body.get("series")
+            chapter = body.get("chapter")
+            page = body.get("page")
+            page_index = body.get("page_index")
+            series_title = body.get("series_title")
+            chapter_title = body.get("chapter_title")
+
+            if not series or not chapter:
+                self._send_error("Missing required fields: 'series', 'chapter'", HTTPStatus.BAD_REQUEST)
+                return
+
+            if not self.library.exists():
+                self._send_error("Library directory is not configured or does not exist", HTTPStatus.BAD_REQUEST)
+                return
+
+            series = series.strip()
+            chapter = chapter.strip()
+
+            if is_remote_series(series):
+                try:
+                    pages = self.remote_service.get_chapter_pages(series, chapter)
+                    provider, _ = self.remote_service.parse_series_identifier(series)
+                    target_page = None
+                    target_idx = None
+
+                    if page:
+                        for idx, p in enumerate(pages, start=1):
+                            if f"{idx}.jpg" == str(page) or str(p.index) == str(page) or f"{p.index}.jpg" == str(page):
+                                target_page = p
+                                target_idx = idx
+                                break
+
+                    if not target_page and page_index:
+                        try:
+                            p_idx = int(page_index)
+                            if 1 <= p_idx <= len(pages):
+                                target_page = pages[p_idx - 1]
+                                target_idx = p_idx
+                        except (ValueError, TypeError):
+                            pass
+
+                    if not target_page and pages:
+                        target_page = pages[0]
+                        target_idx = 1
+
+                    if not target_page:
+                        self._send_error("No pages found for remote chapter", HTTPStatus.NOT_FOUND)
+                        return
+
+                    img_bytes, mime = self.remote_service.stream_page_image(provider.id, target_page.url)
+
+                    # Determine extension: match actual image format from binary magic bytes
+                    fmt = detect_image_format(img_bytes)
+                    ext = None
+                    if fmt:
+                        fmt_exts = {
+                            "jpeg": (".jpg", ".jpeg"),
+                            "png": (".png",),
+                            "webp": (".webp",),
+                            "gif": (".gif",),
+                            "avif": (".avif",),
+                            "bmp": (".bmp",),
+                        }
+                        allowed = fmt_exts.get(fmt, (f".{fmt}",))
+                        if target_page.url:
+                            url_path = urlparse(target_page.url).path
+                            url_ext = Path(url_path).suffix.lower()
+                            if url_ext in allowed:
+                                ext = url_ext
+                        if not ext:
+                            ext = allowed[0]
+                    elif target_page.url:
+                        url_path = urlparse(target_page.url).path
+                        url_ext = Path(url_path).suffix.lower()
+                        if url_ext in IMAGE_EXTENSIONS:
+                            ext = url_ext
+                    if not ext and mime:
+                        ext = mimetypes.guess_extension(mime)
+                    if not ext:
+                        ext = ".jpg"
+
+                    # Determine series display name
+                    display_series = series_title
+                    if not display_series:
+                        try:
+                            ch_data = self.remote_service.get_chapters(series)
+                            display_series = ch_data.get("title")
+                        except Exception:
+                            pass
+                    if not display_series:
+                        display_series = series
+
+                    display_chapter = chapter_title or chapter
+
+                    res = self.library.save_screenshot(
+                        series_name=display_series,
+                        chapter_name=display_chapter,
+                        page_identifier=str(target_idx or page or "001"),
+                        image_bytes=img_bytes,
+                        ext=ext,
+                        page_index=target_idx,
+                    )
+                    if not res:
+                        self._send_error("Failed to save screenshot", HTTPStatus.INTERNAL_SERVER_ERROR)
+                        return
+
+                    self._send_json(res)
+                    return
+                except Exception as e:
+                    self._send_error(f"Failed to fetch remote image: {e}", HTTPStatus.BAD_GATEWAY)
+                    return
+
+            # Local series
+            images = self.library.list_images(series, chapter)
+            if not images:
+                self._send_error("No images found in chapter", HTTPStatus.NOT_FOUND)
+                return
+
+            target_filename = None
+            target_idx = None
+
+            if page:
+                for idx, fname in enumerate(images, start=1):
+                    if fname == str(page):
+                        target_filename = fname
+                        target_idx = idx
+                        break
+
+            if not target_filename and page_index:
+                try:
+                    p_idx = int(page_index)
+                    if 1 <= p_idx <= len(images):
+                        target_filename = images[p_idx - 1]
+                        target_idx = p_idx
+                except (ValueError, TypeError):
+                    pass
+
+            if not target_filename:
+                target_filename = images[0]
+                target_idx = 1
+
+            info = self.library.get_chapter_image_info(series, chapter, target_filename)
+            if not info:
+                self._send_error(f"Image not found: {target_filename}", HTTPStatus.NOT_FOUND)
+                return
+
+            source_type = info[0]
+            if source_type == "file":
+                _, image_path, _, _, _ = info
+                try:
+                    img_bytes = image_path.read_bytes()
+                except OSError as e:
+                    self._send_error(f"Failed to read image: {e}", HTTPStatus.INTERNAL_SERVER_ERROR)
+                    return
+                ext = image_path.suffix
+            elif source_type == "archive":
+                _, archive_path, member_name, _, _ = info
+                try:
+                    with zipfile.ZipFile(archive_path, "r") as zf:
+                        img_bytes = zf.read(member_name)
+                except Exception as e:
+                    self._send_error(f"Failed to read archive image: {e}", HTTPStatus.INTERNAL_SERVER_ERROR)
+                    return
+                ext = Path(member_name).suffix
+            else:
+                self._send_error("Unsupported image source", HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+
+            display_series = series_title or series
+            display_chapter = chapter_title or chapter
+
+            res = self.library.save_screenshot(
+                series_name=display_series,
+                chapter_name=display_chapter,
+                page_identifier=target_filename,
+                image_bytes=img_bytes,
+                ext=ext,
+                page_index=target_idx,
+            )
+            if not res:
+                self._send_error("Failed to save screenshot", HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+
+            self._send_json(res)
             return
 
         # 0d. Remote Provider POST Endpoints

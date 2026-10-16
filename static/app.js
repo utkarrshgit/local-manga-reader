@@ -129,6 +129,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let removeBackgroundFlag = false;
 
   // DOM Elements - Reader
+  const readerHeader = document.querySelector(".reader-header");
   const readerSeriesName = document.getElementById("reader-series-name");
   const readerChapterName = document.getElementById("reader-chapter-name");
   const readerContainer = document.getElementById("reader-container");
@@ -181,6 +182,132 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentSeriesUnread = new Set();
   let currentSeriesLastRead = null;
   let activeReaderComplete = null;
+  let activeReaderSuppressAutoComplete = null;
+
+  // Temporary Reader Zoom State (50% to 300%, default 100%, purely in-memory)
+  const MIN_READER_ZOOM = 50;
+  const MAX_READER_ZOOM = 300;
+  const DEFAULT_READER_ZOOM = 100;
+  let currentReaderZoom = DEFAULT_READER_ZOOM;
+  const readerZoomIndicator = document.getElementById("reader-zoom-indicator");
+  let zoomIndicatorTimeout = null;
+
+  function showZoomIndicator(text) {
+    if (!readerZoomIndicator) return;
+    readerZoomIndicator.textContent = text;
+    readerZoomIndicator.classList.remove("hidden");
+    requestAnimationFrame(() => {
+      readerZoomIndicator.classList.add("visible");
+    });
+    clearTimeout(zoomIndicatorTimeout);
+    zoomIndicatorTimeout = setTimeout(() => {
+      readerZoomIndicator.classList.remove("visible");
+      setTimeout(() => {
+        if (!readerZoomIndicator.classList.contains("visible")) {
+          readerZoomIndicator.classList.add("hidden");
+        }
+      }, 250);
+    }, 1200);
+  }
+
+  function hideZoomIndicator() {
+    if (!readerZoomIndicator) return;
+    clearTimeout(zoomIndicatorTimeout);
+    readerZoomIndicator.classList.remove("visible");
+    readerZoomIndicator.classList.add("hidden");
+  }
+
+  function preserveScrollPositionDuring(action) {
+    if (!readerContainer) {
+      action();
+      return;
+    }
+
+    const pageElements = Array.from(readerContainer.querySelectorAll(".reader-page"));
+    let anchorEl = null;
+    let anchorOffsetRatio = 0;
+
+    const isFullscreen = (typeof isFullscreenActive === "function") && isFullscreenActive();
+    const headerHeight = (readerHeader && !isFullscreen) ? readerHeader.offsetHeight : 0;
+
+    for (const el of pageElements) {
+      const rect = el.getBoundingClientRect();
+      if (rect.bottom > headerHeight && rect.top <= window.innerHeight) {
+        anchorEl = el;
+        const visibleTop = Math.max(0, headerHeight - rect.top);
+        anchorOffsetRatio = rect.height > 0 ? (visibleTop / rect.height) : 0;
+        break;
+      }
+    }
+
+    const maxScrollBefore = document.documentElement.scrollHeight - window.innerHeight;
+    const scrollRatio = maxScrollBefore > 0 ? (window.scrollY / maxScrollBefore) : 0;
+
+    action();
+
+    if (anchorEl) {
+      const newRect = anchorEl.getBoundingClientRect();
+      const currentScrollY = window.scrollY || window.pageYOffset || 0;
+      const targetPageTop = currentScrollY + newRect.top;
+      const newOffset = anchorOffsetRatio * newRect.height;
+      const targetScrollY = Math.max(0, Math.round(targetPageTop + newOffset - headerHeight));
+      window.scrollTo({ top: targetScrollY, behavior: "instant" });
+    } else if (maxScrollBefore > 0) {
+      const maxScrollAfter = document.documentElement.scrollHeight - window.innerHeight;
+      if (maxScrollAfter > 0) {
+        window.scrollTo({ top: Math.max(0, Math.round(scrollRatio * maxScrollAfter)), behavior: "instant" });
+      }
+    }
+  }
+
+  function setReaderZoom(zoomPercent, showFeedback = true) {
+    const clamped = Math.max(MIN_READER_ZOOM, Math.min(MAX_READER_ZOOM, Math.round(zoomPercent)));
+    currentReaderZoom = clamped;
+
+    if (readerContainer) {
+      readerContainer.style.setProperty("--reader-zoom", (clamped / 100).toString());
+    }
+
+    if (showFeedback) {
+      showZoomIndicator(`${clamped}%`);
+    } else {
+      hideZoomIndicator();
+    }
+  }
+
+  function resetReaderZoom(showFeedback = false) {
+    if (showFeedback && viewReader && viewReader.classList.contains("hidden")) return;
+    if (currentReaderZoom === DEFAULT_READER_ZOOM) {
+      if (showFeedback) {
+        showZoomIndicator(`${DEFAULT_READER_ZOOM}%`);
+      } else {
+        hideZoomIndicator();
+      }
+      return;
+    }
+
+    if (showFeedback) {
+      preserveScrollPositionDuring(() => {
+        setReaderZoom(DEFAULT_READER_ZOOM, true);
+      });
+    } else {
+      setReaderZoom(DEFAULT_READER_ZOOM, false);
+    }
+  }
+
+  function changeReaderZoom(deltaPercent) {
+    if (viewReader.classList.contains("hidden")) return;
+    const target = currentReaderZoom + deltaPercent;
+    const clamped = Math.max(MIN_READER_ZOOM, Math.min(MAX_READER_ZOOM, target));
+    if (clamped === currentReaderZoom && (target < MIN_READER_ZOOM || target > MAX_READER_ZOOM)) {
+      showZoomIndicator(`${clamped}%`);
+      return;
+    }
+
+    preserveScrollPositionDuring(() => {
+      setReaderZoom(clamped, true);
+    });
+  }
 
   // Load saved preferences
   try {
@@ -1172,14 +1299,66 @@ document.addEventListener("DOMContentLoaded", () => {
     seriesScrollTicking = false;
   }
 
+  // Held Arrow Key Smooth Continuous Scrolling State and Helpers
+  let heldArrowKey = null;
+  let heldScrollRafId = null;
+  let lastHeldScrollTime = 0;
+
+  function stopHeldArrowScroll() {
+    if (heldScrollRafId) {
+      cancelAnimationFrame(heldScrollRafId);
+      heldScrollRafId = null;
+    }
+    heldArrowKey = null;
+    lastHeldScrollTime = 0;
+  }
+
+  function startHeldArrowScroll(key) {
+    if (heldArrowKey === key && heldScrollRafId) {
+      return;
+    }
+    heldArrowKey = key;
+    lastHeldScrollTime = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+
+    if (heldScrollRafId) {
+      cancelAnimationFrame(heldScrollRafId);
+      heldScrollRafId = null;
+    }
+
+    const scrollLoop = (timestamp) => {
+      if (!heldArrowKey || !viewReader || viewReader.classList.contains("hidden")) {
+        stopHeldArrowScroll();
+        return;
+      }
+      const now = timestamp || ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now());
+      const dt = Math.min(0.05, Math.max(0.001, (now - (lastHeldScrollTime || now)) / 1000));
+      lastHeldScrollTime = now;
+
+      const speed = Math.max(800, Math.round(window.innerHeight * 1.8));
+      const distance = Math.round(speed * dt);
+
+      if (distance > 0) {
+        const dir = heldArrowKey === "ArrowUp" ? -1 : 1;
+        window.scrollBy({ top: dir * distance, behavior: "instant" });
+      }
+
+      heldScrollRafId = requestAnimationFrame(scrollLoop);
+    };
+
+    heldScrollRafId = requestAnimationFrame(scrollLoop);
+  }
+
   // View switcher
   function switchView(viewName) {
+    stopHeldArrowScroll();
     clearError();
-    document.body.classList.toggle("reader-active", viewName === "reader");
+    const isReader = viewName === "reader";
+    document.body.classList.toggle("reader-active", isReader);
+    document.documentElement.classList.toggle("reader-active", isReader);
     document.body.classList.toggle("series-active", viewName === "chapters");
     viewLibrary.classList.toggle("hidden", viewName !== "library");
     viewChapters.classList.toggle("hidden", viewName !== "chapters");
-    viewReader.classList.toggle("hidden", viewName !== "reader");
+    viewReader.classList.toggle("hidden", !isReader);
 
     if (viewName !== "library") {
       if (libraryUnavailable) {
@@ -1208,6 +1387,9 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       currentPrevChapter = null;
       currentNextChapter = null;
+      activeReaderComplete = null;
+      activeReaderSuppressAutoComplete = null;
+      resetReaderZoom();
     }
 
     if (viewName !== "chapters") {
@@ -1296,6 +1478,7 @@ document.addEventListener("DOMContentLoaded", () => {
     return !!(
       document.fullscreenElement ||
       document.webkitFullscreenElement ||
+      document.webkitCurrentFullScreenElement ||
       document.mozFullScreenElement ||
       document.msFullscreenElement
     );
@@ -1313,8 +1496,36 @@ document.addEventListener("DOMContentLoaded", () => {
     btnReaderFullscreen.setAttribute("aria-label", active ? "Exit fullscreen" : "Toggle fullscreen");
   }
 
-  function toggleFullscreen() {
+  function exitFullscreen() {
     const doc = document;
+    if (!isFullscreenActive()) {
+      return Promise.resolve();
+    }
+    try {
+      let p = null;
+      if (doc.exitFullscreen) {
+        p = doc.exitFullscreen();
+      } else if (doc.webkitExitFullscreen) {
+        p = doc.webkitExitFullscreen();
+      } else if (doc.mozCancelFullScreen) {
+        p = doc.mozCancelFullScreen();
+      } else if (doc.msExitFullscreen) {
+        p = doc.msExitFullscreen();
+      }
+      if (p && typeof p.then === "function") {
+        return p.catch(() => {});
+      }
+    } catch {
+      try {
+        if (doc.webkitExitFullscreen) {
+          doc.webkitExitFullscreen();
+        }
+      } catch {}
+    }
+    return Promise.resolve();
+  }
+
+  function toggleFullscreen() {
     const docEl = document.documentElement;
 
     if (!isFullscreenActive()) {
@@ -1328,15 +1539,7 @@ document.addEventListener("DOMContentLoaded", () => {
         docEl.msRequestFullscreen();
       }
     } else {
-      if (doc.exitFullscreen) {
-        doc.exitFullscreen().catch(() => {});
-      } else if (doc.webkitExitFullscreen) {
-        doc.webkitExitFullscreen();
-      } else if (doc.mozCancelFullScreen) {
-        doc.mozCancelFullScreen();
-      } else if (doc.msExitFullscreen) {
-        doc.msExitFullscreen();
-      }
+      exitFullscreen();
     }
   }
 
@@ -1562,6 +1765,9 @@ document.addEventListener("DOMContentLoaded", () => {
     } else {
       currentSeriesCompleted.delete(chapterName);
       currentSeriesUnread.add(chapterName);
+      if (typeof activeReaderSuppressAutoComplete === "function") {
+        activeReaderSuppressAutoComplete();
+      }
     }
 
     renderSeriesChaptersList();
@@ -2957,6 +3163,7 @@ document.addEventListener("DOMContentLoaded", () => {
     currentSeries = seriesName;
     currentChapter = chapterName;
     switchView("reader");
+    resetReaderZoom();
 
     readerSeriesName.textContent = seriesName;
     readerChapterName.textContent = chapterName;
@@ -3160,6 +3367,10 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       activeReaderComplete = completeCurrentChapter;
+      activeReaderSuppressAutoComplete = () => {
+        canAutoComplete = false;
+        hasTriggeredAutoComplete = true;
+      };
 
       if (targetPage) {
         currentVisibleImage = savedImage;
@@ -3214,6 +3425,7 @@ document.addEventListener("DOMContentLoaded", () => {
             // Visiting or scrolling to earlier pages enables completion upon returning to the final page
             if (activeIndex < images.length) {
               canAutoComplete = true;
+              hasTriggeredAutoComplete = false;
             }
 
             // Auto-complete chapter when reader reaches the final page during active reading
@@ -3377,7 +3589,10 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // Reader Back Buttons
-  function navigateBackToChapters() {
+  async function navigateBackToChapters() {
+    if (isFullscreenActive()) {
+      await exitFullscreen();
+    }
     if (currentSeries) {
       window.location.hash = `#/series/${encodeURIComponent(currentSeries)}`;
     } else {
@@ -3385,7 +3600,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  btnReaderBack.addEventListener("click", navigateBackToChapters);
+  btnReaderBack.addEventListener("click", () => {
+    navigateBackToChapters();
+  });
   btnReaderBottomBack.addEventListener("click", () => {
     if (typeof activeReaderComplete === "function") {
       activeReaderComplete();
@@ -3431,6 +3648,85 @@ document.addEventListener("DOMContentLoaded", () => {
     applyReadingStyle("seamless", true);
   });
 
+  // Reader Page Screenshot Saving
+  let isSavingScreenshot = false;
+
+  function getActiveVisiblePageInfo() {
+    if (!currentChapterImages || currentChapterImages.length === 0) return null;
+
+    const pageElements = Array.from(readerContainer.querySelectorAll(".reader-page"));
+    if (pageElements.length === 0) {
+      return {
+        filename: currentVisibleImage || currentChapterImages[0].filename,
+        index: 1
+      };
+    }
+
+    const viewportCenter = window.innerHeight / 2;
+    let bestPage = null;
+    let minDistance = Infinity;
+
+    for (const pageEl of pageElements) {
+      const rect = pageEl.getBoundingClientRect();
+      if (rect.bottom > 0 && rect.top < window.innerHeight) {
+        const pageCenter = rect.top + rect.height / 2;
+        const dist = Math.abs(pageCenter - viewportCenter);
+        if (dist < minDistance) {
+          minDistance = dist;
+          bestPage = pageEl;
+        }
+      }
+    }
+
+    const targetFilename = bestPage ? bestPage.dataset.filename : (currentVisibleImage || currentChapterImages[0].filename);
+    const targetIdx = currentChapterImages.findIndex((img) => img.filename === targetFilename) + 1;
+
+    return {
+      filename: targetFilename,
+      index: targetIdx > 0 ? targetIdx : 1
+    };
+  }
+
+  async function saveCurrentPageScreenshot() {
+    if (isSavingScreenshot) return;
+    if (!currentSeries || !currentChapter) return;
+
+    const pageInfo = getActiveVisiblePageInfo();
+    if (!pageInfo) {
+      showError("No page available to save");
+      return;
+    }
+
+    isSavingScreenshot = true;
+    try {
+      const res = await fetch("/api/screenshot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          series: currentSeries,
+          chapter: currentChapter,
+          page: pageInfo.filename,
+          page_index: pageInfo.index,
+          series_title: readerSeriesName ? readerSeriesName.textContent.trim() : "",
+          chapter_title: readerChapterName ? readerChapterName.textContent.trim() : ""
+        })
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.success) {
+        const msg = (data && data.error) ? data.error : `HTTP error ${res.status}`;
+        showError(`Failed to save screenshot: ${msg}`);
+        return;
+      }
+
+      showSuccess(`Saved ${data.filename || "screenshot"}`);
+    } catch (err) {
+      showError(`Failed to save screenshot: ${err.message}`);
+    } finally {
+      isSavingScreenshot = false;
+    }
+  }
+
   // Lightweight Keyboard Shortcuts
   window.addEventListener("keydown", (e) => {
     // Ignore if user is typing in form controls or editable elements
@@ -3452,22 +3748,130 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    if (e.key === "ArrowLeft") {
+    const isZoomIn = (
+      (e.key === "=" || e.key === "+") ||
+      e.key === "Add" ||
+      e.code === "Equal" ||
+      e.code === "NumpadAdd" ||
+      e.code === "NumpadEqual" ||
+      e.keyCode === 187 ||
+      e.keyCode === 61 ||
+      e.keyCode === 107 ||
+      e.which === 187 ||
+      e.which === 61 ||
+      e.which === 107
+    );
+    const isZoomOut = (
+      (e.key === "-" || e.key === "_") ||
+      e.key === "Subtract" ||
+      e.code === "Minus" ||
+      e.code === "NumpadSubtract" ||
+      e.keyCode === 189 ||
+      e.keyCode === 173 ||
+      e.keyCode === 109 ||
+      e.which === 189 ||
+      e.which === 173 ||
+      e.which === 109
+    );
+    const isZoomReset = (
+      !e.shiftKey &&
+      (
+        e.key === "0" ||
+        e.code === "Digit0" ||
+        e.code === "Numpad0" ||
+        e.keyCode === 48 ||
+        e.keyCode === 96 ||
+        e.which === 48 ||
+        e.which === 96
+      )
+    );
+
+    if (isZoomIn) {
+      e.preventDefault();
+      changeReaderZoom(10);
+    } else if (isZoomOut) {
+      e.preventDefault();
+      changeReaderZoom(-10);
+    } else if (isZoomReset) {
+      e.preventDefault();
+      resetReaderZoom(true);
+    } else if (e.shiftKey && (e.key === "R" || e.key === "r")) {
+      e.preventDefault();
+      if (!currentSeries || !currentChapter) return;
+      const isDone = isChapterCompleted(currentChapter);
+      toggleChapterCompleted(currentSeries, currentChapter, !isDone);
+    } else if (e.shiftKey && (e.key === "S" || e.key === "s" || e.code === "KeyS")) {
+      e.preventDefault();
+      const nextStyle = currentReadingStyle === "spaced" ? "seamless" : "spaced";
+      applyReadingStyle(nextStyle, true);
+    } else if (!e.shiftKey && (e.key === "s" || e.key === "S")) {
+      e.preventDefault();
+      saveCurrentPageScreenshot();
+    } else if (e.shiftKey && e.key === "ArrowUp") {
+      e.preventDefault();
+      stopHeldArrowScroll();
+      window.scrollTo({ top: 0, behavior: "instant" });
+    } else if (e.shiftKey && e.key === "ArrowDown") {
+      e.preventDefault();
+      stopHeldArrowScroll();
+      const maxScroll = Math.max(
+        document.documentElement.scrollHeight,
+        document.body.scrollHeight
+      );
+      window.scrollTo({ top: maxScroll, behavior: "instant" });
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (e.repeat) {
+        startHeldArrowScroll("ArrowUp");
+      } else {
+        stopHeldArrowScroll();
+        const scrollDistance = Math.round(window.innerHeight * 0.75);
+        window.scrollBy({ top: -scrollDistance, behavior: "smooth" });
+      }
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (e.repeat) {
+        startHeldArrowScroll("ArrowDown");
+      } else {
+        stopHeldArrowScroll();
+        const scrollDistance = Math.round(window.innerHeight * 0.75);
+        window.scrollBy({ top: scrollDistance, behavior: "smooth" });
+      }
+    } else if (e.key === "ArrowLeft") {
+      stopHeldArrowScroll();
       if (currentPrevChapter) {
         e.preventDefault();
         navigateToChapter(currentPrevChapter);
       }
     } else if (e.key === "ArrowRight") {
+      stopHeldArrowScroll();
       if (currentNextChapter) {
         e.preventDefault();
         navigateToChapter(currentNextChapter);
       }
     } else if (e.key === "f" || e.key === "F") {
+      stopHeldArrowScroll();
       e.preventDefault();
       toggleFullscreen();
     } else if (e.key === "b" || e.key === "B") {
+      stopHeldArrowScroll();
       e.preventDefault();
       btnReaderBookmark.click();
+    }
+  });
+
+  window.addEventListener("keyup", (e) => {
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      if (heldArrowKey === e.key) {
+        stopHeldArrowScroll();
+      }
+    }
+  });
+
+  window.addEventListener("blur", stopHeldArrowScroll);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      stopHeldArrowScroll();
     }
   });
 

@@ -113,9 +113,12 @@ python3 server.py --help
 
 ## Reading / Keyboard Shortcuts
 
-### Reading Modes
+### Reading Modes & Controls
 - **Spaced Mode**: Adds spacing and subtle borders between pages, ideal for traditional Japanese manga.
 - **Seamless Mode**: Strips all padding and borders for a continuous unbroken scroll, ideal for Korean manhwa and webtoons.
+- **Fixed Translucent Header**: The reader header stays pinned with a subtle blur effect as you scroll, keeping navigation, chapter title, zoom, reading mode, and fullscreen controls accessible without obstructing artwork.
+- **Chapters Button**: Seamlessly navigates back to the series chapter list from the reader header, cleanly exiting fullscreen first if active.
+- **Smooth & Continuous Scrolling**: Press or hold the Up/Down arrow keys for continuous, fluid reading scrolling.
 
 ### Keyboard Shortcuts
 
@@ -123,12 +126,58 @@ python3 server.py --help
 | :--- | :--- |
 | `Left` / `Page Up` | Go to previous chapter |
 | `Right` / `Page Down` | Go to next chapter |
+| `Up Arrow` | Scroll up through the current chapter (hold for continuous scroll) |
+| `Down Arrow` | Scroll down through the current chapter (hold for continuous scroll) |
+| `Shift + Up Arrow` | Jump to the top of the chapter |
+| `Shift + Down Arrow` | Jump to the bottom of the chapter |
 | `Home` | Scroll to top of chapter |
 | `End` | Scroll to bottom of chapter |
 | `F` | Toggle fullscreen |
 | `B` | Toggle chapter bookmark |
-| `S` | Switch reading style (Spaced ⟷ Seamless) |
+| `Shift + R` | Toggle chapter Read / Unread status |
+| `Shift + S` | Toggle Spaced / Seamless reading mode |
+| `S` | Save currently displayed page screenshot to `<Library>/Screenshots/` |
+| `=` / `+` | Zoom in by 10% (50% to 300% range, temporary) |
+| `-` | Zoom out by 10% (50% to 300% range, temporary) |
+| `0` | Reset zoom to 100% (temporary) |
 | `Escape` | Exit fullscreen / close modal / back to series |
+
+> **Note on Zoom**: Zooming is a temporary viewing adjustment with a range of 50% to 300% (default 100%). It adjusts manga page images only, persists across entering/exiting fullscreen within the same chapter session, and resets to 100% when navigating to another chapter or exiting the reader view. Zoom state is never stored in local storage, server settings, or series preferences.
+
+### Page Screenshots (`S`)
+Pressing `S` captures the currently visible manga page in its original source resolution and saves it cleanly to:
+```text
+<Library Folder>/Screenshots/<Series Name>/<Chapter Name>_p<Page Number>_<Timestamp>.png
+```
+For remote manga streams, screenshots are automatically saved to your configured library's screenshot directory, or downloaded via the browser if no local library is set.
+
+## Library & Organization
+
+- **Pinned Manga**: Pin your favorite series to keep them anchored at the top of your library for quick access.
+- **Unified Sorting**: Sort by Name, Chapters, or Unread count with a single click.
+- **Centered Series Header**: The manga title in the series view header is centered relative to the viewport with smart ellipsis truncation on narrow screens.
+
+## Application Data & Storage Locations
+
+`{ index }` separates your manga library files from application configuration and state:
+
+### Global Configuration & Remote State
+Application settings (`settings.json`), user profiles (`profile.json`, `avatar.jpg`), and remote reading progress (`remote_reader_data.json`) are stored in OS-standard application data directories:
+- **macOS**: `~/Library/Application Support/LocalMangaReader/`
+- **Windows**: `%APPDATA%\LocalMangaReader\` (typically `C:\Users\<User>\AppData\Roaming\LocalMangaReader\`)
+- **Linux**: `~/.config/LocalMangaReader/` (or `$XDG_CONFIG_HOME/LocalMangaReader/`)
+
+### Per-Series Local Data
+Reading progress, chapter completion status, bookmarks, and series display preferences for local manga are stored inside a hidden folder within each series:
+```text
+<Library>/<Series Name>/.reader/reader_data.json
+```
+Your original manga image files and archives (`.cbz`/`.zip`) are **never modified, renamed, or extracted**.
+
+## Known Limitations
+
+- **Safari Fullscreen Scroll Restoration**: When exiting fullscreen in Safari (macOS / WebKit), Safari's internal viewport restoration behavior may return the scroll position to where you were before entering fullscreen. Chrome, Edge, and Firefox preserve the active reading position correctly. If reading on Safari, scrolling or using page bookmarks before exiting fullscreen helps track your position.
+- **Upstream Cloudflare Protection**: When reading remote manga (e.g. WeebCentral, nhentai), upstream Cloudflare bot-protection or captcha challenge pages (HTTP 403 / 503) may temporarily prevent streaming until the upstream site relaxes verification.
 
 ## Basic Troubleshooting
 
