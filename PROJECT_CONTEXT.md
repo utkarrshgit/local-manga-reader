@@ -798,7 +798,7 @@ bash -n start-linux.sh
 ## 16. Known Limitations, Edge Cases & Operational Notes
 
 1. **Safari Fullscreen Scroll Restoration**:
-   When exiting fullscreen in Safari (macOS / WebKit), Safari's internal layout restoration can reset the scroll position to where you were before entering fullscreen mode. Chrome, Edge, and Firefox preserve the position properly. Complex browser-event interception workarounds have been deliberately avoided to maintain codebase simplicity and prevent event loop regressions.
+   When exiting fullscreen in Safari (macOS / WebKit), Safari's internal layout restoration and macOS Space transition can reset the window scroll position to where it was before entering fullscreen. A lightweight, bounded workaround in `static/app.js` captures the active `.reader-page` element and viewport-relative offset immediately prior to exiting fullscreen, monitors delayed browser layout settling across the Space transition, restores the scroll alignment if an unexpected shift occurs, and guards `IntersectionObserver` progress tracking against transient glitch overwrites. Deliberate user scrolling immediately cancels restoration.
 2. **Upstream Cloudflare Protection**:
    If an upstream provider (such as nhentai or WeebCentral) activates strict Cloudflare challenge pages (e.g. Under Attack Mode), requests will return HTTP 403 or 503. The server catches these and returns clean error messages rather than hanging.
 3. **WeebCentral Dynamic Images**:

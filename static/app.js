@@ -388,10 +388,16 @@ document.addEventListener("DOMContentLoaded", () => {
   let restorationFailedWithoutInteraction = false;
   let activeReaderLoadToken = 0;
   let restorationCleanupFn = null;
+  let lastFullscreenPosition = null;
+  let isFullscreenRestoring = false;
 
   function cancelActiveRestoration() {
     isRestoringProgress = false;
     restorationFailedWithoutInteraction = false;
+    if (typeof cancelFullscreenRestoration === "function") {
+      cancelFullscreenRestoration();
+    }
+    lastFullscreenPosition = null;
     if (restorationCleanupFn) {
       try {
         restorationCleanupFn();
@@ -1894,22 +1900,231 @@ document.addEventListener("DOMContentLoaded", () => {
     );
   }
 
-  function updateFullscreenUI() {
-    if (!btnReaderFullscreen) return;
-    const active = isFullscreenActive();
-    document.body.classList.toggle("in-fullscreen", active);
-    if (iconFullscreenEnter && iconFullscreenExit) {
-      iconFullscreenEnter.classList.toggle("hidden", active);
-      iconFullscreenExit.classList.toggle("hidden", !active);
+  // Fullscreen Scroll Restoration State (Safari macOS Space workaround)
+  let wasFullscreenActive = false;
+  let fullscreenRestorationCleanup = null;
+  const fullscreenRestorationTimeouts = [];
+  let fullscreenRestorationRaf = null;
+
+  function findReaderPageElement(savedPos) {
+    if (!savedPos || !readerContainer) return null;
+    if (savedPos.anchorEl && document.contains(savedPos.anchorEl)) {
+      return savedPos.anchorEl;
     }
-    btnReaderFullscreen.title = active ? "Exit fullscreen (F)" : "Toggle fullscreen (F)";
-    btnReaderFullscreen.setAttribute("aria-label", active ? "Exit fullscreen" : "Toggle fullscreen");
+    if (savedPos.anchorFilename) {
+      const byId = document.getElementById(`page-${savedPos.anchorFilename}`);
+      if (byId && document.contains(byId)) return byId;
+      const pages = readerContainer.querySelectorAll(".reader-page");
+      for (const p of pages) {
+        if (p.dataset.filename === savedPos.anchorFilename) return p;
+      }
+    }
+    return null;
+  }
+
+  function captureReaderPosition() {
+    if (!readerContainer || !viewReader || viewReader.classList.contains("hidden")) return null;
+    const pageElements = readerContainer.querySelectorAll(".reader-page");
+    if (!pageElements.length) return null;
+
+    const isFullscreen = (typeof isFullscreenActive === "function") && isFullscreenActive();
+    const headerHeight = (readerHeader && !isFullscreen) ? readerHeader.offsetHeight : 0;
+    let anchorEl = null;
+    let anchorFilename = null;
+    let anchorOffsetRatio = 0;
+
+    for (const el of pageElements) {
+      const rect = el.getBoundingClientRect();
+      if (rect.bottom > headerHeight && rect.top <= window.innerHeight) {
+        anchorEl = el;
+        anchorFilename = el.dataset.filename || null;
+        const visibleTop = Math.max(0, headerHeight - rect.top);
+        anchorOffsetRatio = rect.height > 0 ? (visibleTop / rect.height) : 0;
+        break;
+      }
+    }
+
+    const scrollY = window.scrollY || window.pageYOffset || 0;
+    const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    const scrollRatio = maxScroll > 0 ? (scrollY / maxScroll) : 0;
+
+    return {
+      anchorEl,
+      anchorFilename,
+      anchorOffsetRatio,
+      scrollY,
+      scrollRatio
+    };
+  }
+
+  function isReaderPositionAligned(savedPos) {
+    if (!savedPos || !readerContainer || !viewReader || viewReader.classList.contains("hidden")) return true;
+
+    const el = findReaderPageElement(savedPos);
+    const isFullscreen = (typeof isFullscreenActive === "function") && isFullscreenActive();
+    const headerHeight = (readerHeader && !isFullscreen) ? readerHeader.offsetHeight : 0;
+    const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    const currentScrollY = window.scrollY || window.pageYOffset || 0;
+
+    if (maxScroll > 0 && currentScrollY >= maxScroll - 15 && savedPos.scrollRatio >= 0.98) {
+      return true;
+    }
+    if (currentScrollY <= 15 && savedPos.scrollY <= 15) {
+      return true;
+    }
+
+    if (!el) {
+      return Math.abs(currentScrollY - savedPos.scrollY) <= 50;
+    }
+
+    const rect = el.getBoundingClientRect();
+    const expectedTop = headerHeight - (savedPos.anchorOffsetRatio || 0) * rect.height;
+    return Math.abs(rect.top - expectedTop) <= 40;
+  }
+
+  function restoreReaderPosition(savedPos) {
+    if (!savedPos || !readerContainer || !viewReader || viewReader.classList.contains("hidden")) return false;
+
+    const el = findReaderPageElement(savedPos);
+    const isFullscreen = (typeof isFullscreenActive === "function") && isFullscreenActive();
+    const headerHeight = (readerHeader && !isFullscreen) ? readerHeader.offsetHeight : 0;
+
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      const currentScrollY = window.scrollY || window.pageYOffset || 0;
+      const targetPageTop = currentScrollY + rect.top;
+      const offset = (savedPos.anchorOffsetRatio || 0) * rect.height;
+      const targetScrollY = Math.max(0, Math.round(targetPageTop + offset - headerHeight));
+      window.scrollTo({ top: targetScrollY, behavior: "instant" });
+      return true;
+    } else if (savedPos.scrollRatio > 0) {
+      const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+      if (maxScroll > 0) {
+        window.scrollTo({ top: Math.max(0, Math.round(savedPos.scrollRatio * maxScroll)), behavior: "instant" });
+        return true;
+      }
+    } else if (typeof savedPos.scrollY === "number") {
+      window.scrollTo({ top: savedPos.scrollY, behavior: "instant" });
+      return true;
+    }
+    return false;
+  }
+
+  function cancelFullscreenRestoration() {
+    isFullscreenRestoring = false;
+    if (fullscreenRestorationRaf) {
+      cancelAnimationFrame(fullscreenRestorationRaf);
+      fullscreenRestorationRaf = null;
+    }
+    while (fullscreenRestorationTimeouts.length > 0) {
+      clearTimeout(fullscreenRestorationTimeouts.pop());
+    }
+    if (fullscreenRestorationCleanup) {
+      try {
+        fullscreenRestorationCleanup();
+      } catch {}
+      fullscreenRestorationCleanup = null;
+    }
+  }
+
+  function scheduleFullscreenRestoration() {
+    const targetPos = lastFullscreenPosition || captureReaderPosition();
+    cancelFullscreenRestoration();
+    if (!viewReader || viewReader.classList.contains("hidden") || !targetPos) return;
+
+    isFullscreenRestoring = true;
+
+    const onUserInteraction = (e) => {
+      if (e.type === "keydown") {
+        if (e.key === "f" || e.key === "F" || e.key === "Escape") {
+          return;
+        }
+      }
+      cancelFullscreenRestoration();
+    };
+
+    const interactionEvents = ["wheel", "touchstart", "touchmove", "keydown", "mousedown"];
+    interactionEvents.forEach((evName) => {
+      window.addEventListener(evName, onUserInteraction, { passive: true, capture: true });
+    });
+
+    const onScroll = () => {
+      if (!isFullscreenRestoring) return;
+      if (fullscreenRestorationRaf) return;
+      fullscreenRestorationRaf = requestAnimationFrame(() => {
+        fullscreenRestorationRaf = null;
+        if (!isFullscreenRestoring) return;
+        if (!isReaderPositionAligned(targetPos)) {
+          restoreReaderPosition(targetPos);
+        }
+      });
+    };
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+
+    fullscreenRestorationCleanup = () => {
+      interactionEvents.forEach((evName) => {
+        window.removeEventListener(evName, onUserInteraction, { capture: true });
+      });
+      window.removeEventListener("scroll", onScroll);
+    };
+
+    // Immediate alignment check (if exit layout completed synchronously)
+    if (!isReaderPositionAligned(targetPos)) {
+      restoreReaderPosition(targetPos);
+    }
+
+    // Bounded checks for delayed Safari layout / macOS Space transitions
+    const checkDelays = [50, 150, 300, 500, 750, 1000];
+    checkDelays.forEach((delay) => {
+      const timerId = setTimeout(() => {
+        if (!isFullscreenRestoring) return;
+        if (!isReaderPositionAligned(targetPos)) {
+          restoreReaderPosition(targetPos);
+        }
+      }, delay);
+      fullscreenRestorationTimeouts.push(timerId);
+    });
+
+    // Settling timeout (1200ms) to cleanly end restoration window
+    const settleTimerId = setTimeout(() => {
+      cancelFullscreenRestoration();
+      lastFullscreenPosition = null;
+    }, 1200);
+    fullscreenRestorationTimeouts.push(settleTimerId);
+  }
+
+  function updateFullscreenUI() {
+    const active = isFullscreenActive();
+    const exitedFullscreen = wasFullscreenActive && !active;
+    wasFullscreenActive = active;
+
+    if (active && !isFullscreenRestoring) {
+      lastFullscreenPosition = captureReaderPosition();
+    }
+
+    if (btnReaderFullscreen) {
+      document.body.classList.toggle("in-fullscreen", active);
+      if (iconFullscreenEnter && iconFullscreenExit) {
+        iconFullscreenEnter.classList.toggle("hidden", active);
+        iconFullscreenExit.classList.toggle("hidden", !active);
+      }
+      btnReaderFullscreen.title = active ? "Exit fullscreen (F)" : "Toggle fullscreen (F)";
+      btnReaderFullscreen.setAttribute("aria-label", active ? "Exit fullscreen" : "Toggle fullscreen");
+    }
+
+    if (exitedFullscreen) {
+      scheduleFullscreenRestoration();
+    }
   }
 
   function exitFullscreen() {
     const doc = document;
     if (!isFullscreenActive()) {
       return Promise.resolve();
+    }
+    if (!isFullscreenRestoring) {
+      lastFullscreenPosition = captureReaderPosition();
     }
     try {
       let p = null;
@@ -1970,6 +2185,12 @@ document.addEventListener("DOMContentLoaded", () => {
       document.addEventListener("webkitfullscreenchange", updateFullscreenUI);
     }
   }
+
+  window.addEventListener("scroll", () => {
+    if (isFullscreenActive() && !isFullscreenRestoring) {
+      lastFullscreenPosition = captureReaderPosition();
+    }
+  }, { passive: true });
 
 
   // API Helper: Fetch Reader Data (Bookmarks, Progress & Metadata)
@@ -3993,6 +4214,7 @@ document.addEventListener("DOMContentLoaded", () => {
         });
 
         if (isRestoringProgress || visiblePages.size === 0) return;
+        if (isFullscreenRestoring) return;
 
         // Choose page currently closest to upper reading line
         let bestPage = null;
@@ -4825,6 +5047,9 @@ document.addEventListener("DOMContentLoaded", () => {
   // Escape key to dismiss dropdown or modals
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
+      if (isFullscreenActive() && !isFullscreenRestoring) {
+        lastFullscreenPosition = captureReaderPosition();
+      }
       if (profileDropdown && !profileDropdown.classList.contains("hidden")) {
         toggleProfileDropdown(false);
       } else if ((modalOverlay && !modalOverlay.classList.contains("hidden")) || (modalShortcuts && !modalShortcuts.classList.contains("hidden"))) {
