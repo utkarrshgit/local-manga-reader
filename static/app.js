@@ -380,11 +380,25 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Reading progress observer state
+  // Reading progress observer and restoration state
   let readerObserver = null;
   let currentVisibleImage = null;
   let saveProgressTimeout = null;
-  let isInitialResume = false;
+  let isRestoringProgress = false;
+  let restorationFailedWithoutInteraction = false;
+  let activeReaderLoadToken = 0;
+  let restorationCleanupFn = null;
+
+  function cancelActiveRestoration() {
+    isRestoringProgress = false;
+    restorationFailedWithoutInteraction = false;
+    if (restorationCleanupFn) {
+      try {
+        restorationCleanupFn();
+      } catch {}
+      restorationCleanupFn = null;
+    }
+  }
 
   // Persistent bottom reader progress timeline state
   let chapterTotalPages = 0;
@@ -507,6 +521,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const segment = e.target.closest(".progress-segment");
       if (!segment) return;
 
+      cancelActiveRestoration();
       const targetFilename = segment.dataset.targetFilename;
       const targetPage = parseInt(segment.dataset.targetPage, 10);
 
@@ -1775,6 +1790,7 @@ document.addEventListener("DOMContentLoaded", () => {
         readerObserver.disconnect();
         readerObserver = null;
       }
+      cancelActiveRestoration();
       if (saveProgressTimeout) {
         clearTimeout(saveProgressTimeout);
         saveProgressTimeout = null;
@@ -3605,6 +3621,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 3. Load Real Vertical Scroll Reader View with Reading Progress, Bookmark & Navigation
   async function loadReader(seriesName, chapterName) {
+    const currentLoadToken = ++activeReaderLoadToken;
+    cancelActiveRestoration();
+
     currentSeries = seriesName;
     currentChapter = chapterName;
     switchView("reader");
@@ -3637,6 +3656,10 @@ document.addEventListener("DOMContentLoaded", () => {
         fetch(`/api/chapters?series=${encodeURIComponent(seriesName)}`).then((r) => (r.ok ? r.json() : { chapters: [] })).catch(() => ({ chapters: [] }))
       ]);
 
+      if (currentLoadToken !== activeReaderLoadToken) {
+        return; // Stale load request abandoned
+      }
+
       if (!imagesRes.ok) {
         let errMsg = `HTTP error ${imagesRes.status}`;
         try {
@@ -3646,6 +3669,10 @@ document.addEventListener("DOMContentLoaded", () => {
         throw new Error(errMsg);
       }
       const data = await imagesRes.json();
+
+      if (currentLoadToken !== activeReaderLoadToken) {
+        return; // Stale load request abandoned
+      }
 
       if (chaptersData && chaptersData.title) {
         readerSeriesName.textContent = chaptersData.title;
@@ -3696,6 +3723,9 @@ document.addEventListener("DOMContentLoaded", () => {
         filenameToIndex.set(img.filename, idx + 1);
       });
 
+      // Determine saved image position to prioritize loading if resuming
+      const savedImage = currentSeriesProgress[chapterName];
+
       // Setup bottom reading progress timeline
       currentChapterImages = images;
       setupReaderProgress(images.length);
@@ -3713,8 +3743,15 @@ document.addEventListener("DOMContentLoaded", () => {
         imgEl.src = img.url;
         imgEl.alt = img.filename;
         imgEl.dataset.filename = img.filename;
-        imgEl.loading = "lazy";
-        imgEl.decoding = "async";
+
+        // Ensure saved target image loads immediately without being starved by lazy loading
+        if (savedImage && img.filename === savedImage) {
+          imgEl.loading = "eager";
+          imgEl.fetchPriority = "high";
+        } else {
+          imgEl.loading = "lazy";
+          imgEl.decoding = "async";
+        }
 
         imgEl.onerror = () => {
           imgEl.classList.add("image-load-failed");
@@ -3753,7 +3790,6 @@ document.addEventListener("DOMContentLoaded", () => {
       readerFooter.classList.remove("hidden");
 
       // Resume reading progress
-      const savedImage = currentSeriesProgress[chapterName];
       let targetPage = null;
       let initialPageIndex = 1;
       if (savedImage && filenameToIndex.has(savedImage)) {
@@ -3817,16 +3853,128 @@ document.addEventListener("DOMContentLoaded", () => {
         hasTriggeredAutoComplete = true;
       };
 
-      if (targetPage) {
+      // Explicit restoration lifecycle for saved positions beyond page 1
+      if (targetPage && initialPageIndex > 1) {
         currentVisibleImage = savedImage;
-        isInitialResume = true;
-        targetPage.scrollIntoView({ behavior: "instant", block: "start" });
-        setTimeout(() => {
-          isInitialResume = false;
-        }, 300);
+        isRestoringProgress = true;
+        restorationFailedWithoutInteraction = false;
+
+        let restorationSettled = false;
+        let alignRafId = null;
+
+        const targetImg = targetPage.querySelector(".reader-image");
+
+        const isTargetAligned = () => {
+          if (!targetPage) return false;
+          const rect = targetPage.getBoundingClientRect();
+          const targetImgEl = targetPage.querySelector(".reader-image");
+          const hasDimensions = targetImgEl && (targetImgEl.naturalHeight > 0 || targetImgEl.offsetHeight > 50);
+          const scrollY = window.scrollY || window.pageYOffset || 0;
+          const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+          const atMaxScroll = maxScroll > 0 && (scrollY >= maxScroll - 15);
+          return hasDimensions && ((rect.top >= -40 && rect.top <= 140) || atMaxScroll);
+        };
+
+        const attemptScrollAlignment = () => {
+          if (!isRestoringProgress || restorationSettled || currentLoadToken !== activeReaderLoadToken) return;
+          try {
+            targetPage.scrollIntoView({ behavior: "instant", block: "start" });
+          } catch {}
+
+          if (isTargetAligned()) {
+            restorationSettled = true;
+            finishRestoration(true);
+          }
+        };
+
+        const onUserInteraction = () => {
+          if (!restorationSettled && isRestoringProgress) {
+            restorationSettled = true;
+            finishRestoration(true);
+          }
+        };
+
+        const finishRestoration = (wasHandled) => {
+          isRestoringProgress = false;
+          if (!wasHandled) {
+            // Safety limit reached without user interaction and without successful alignment:
+            // Fail safely without overwriting the saved progress in the database.
+            restorationFailedWithoutInteraction = true;
+          } else {
+            restorationFailedWithoutInteraction = false;
+          }
+          cleanup();
+        };
+
+        // User deliberate interaction listeners (wheel, touch, keys)
+        const interactionEvents = ["wheel", "touchstart", "touchmove", "keydown", "mousedown"];
+        interactionEvents.forEach((evName) => {
+          window.addEventListener(evName, onUserInteraction, { passive: true, capture: true });
+        });
+
+        // Direct image load listener on target image
+        const onTargetImgLoad = () => {
+          if (alignRafId) cancelAnimationFrame(alignRafId);
+          alignRafId = requestAnimationFrame(attemptScrollAlignment);
+        };
+
+        if (targetImg) {
+          if (targetImg.complete && targetImg.naturalHeight > 0) {
+            attemptScrollAlignment();
+          } else {
+            targetImg.addEventListener("load", onTargetImgLoad);
+            targetImg.addEventListener("error", onTargetImgLoad);
+          }
+        } else {
+          attemptScrollAlignment();
+        }
+
+        // ResizeObserver to detect layout shifts as preceding images expand
+        let resizeObserver = null;
+        if (typeof ResizeObserver !== "undefined") {
+          resizeObserver = new ResizeObserver(() => {
+            if (!isRestoringProgress || restorationSettled) return;
+            if (alignRafId) cancelAnimationFrame(alignRafId);
+            alignRafId = requestAnimationFrame(attemptScrollAlignment);
+          });
+          resizeObserver.observe(readerContainer);
+        }
+
+        // Safety fallback timer (6 seconds)
+        const safetyTimer = setTimeout(() => {
+          if (isRestoringProgress && !restorationSettled) {
+            finishRestoration(false);
+          }
+        }, 6000);
+
+        const cleanup = () => {
+          if (alignRafId) {
+            cancelAnimationFrame(alignRafId);
+            alignRafId = null;
+          }
+          clearTimeout(safetyTimer);
+          interactionEvents.forEach((evName) => {
+            window.removeEventListener(evName, onUserInteraction, { capture: true });
+          });
+          if (targetImg) {
+            targetImg.removeEventListener("load", onTargetImgLoad);
+            targetImg.removeEventListener("error", onTargetImgLoad);
+          }
+          if (resizeObserver) {
+            resizeObserver.disconnect();
+            resizeObserver = null;
+          }
+          restorationCleanupFn = null;
+        };
+
+        restorationCleanupFn = cleanup;
+
+        // Perform initial alignment attempt
+        attemptScrollAlignment();
       } else {
         currentVisibleImage = images[0] ? images[0].filename : null;
-        isInitialResume = false;
+        isRestoringProgress = false;
+        restorationFailedWithoutInteraction = false;
       }
 
       // Track reading progress with IntersectionObserver
@@ -3834,6 +3982,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const visiblePages = new Map();
 
       readerObserver = new IntersectionObserver((entries) => {
+        if (currentLoadToken !== activeReaderLoadToken) return;
+
         entries.forEach((entry) => {
           if (entry.isIntersecting) {
             visiblePages.set(entry.target, entry.boundingClientRect.top);
@@ -3842,7 +3992,7 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         });
 
-        if (isInitialResume || visiblePages.size === 0) return;
+        if (isRestoringProgress || visiblePages.size === 0) return;
 
         // Choose page currently closest to upper reading line
         let bestPage = null;
@@ -3880,12 +4030,18 @@ document.addEventListener("DOMContentLoaded", () => {
           }
 
           if (filename && filename !== currentVisibleImage) {
+            // Guard: If restoration failed without user interaction, do not passively overwrite saved progress
+            if (restorationFailedWithoutInteraction) {
+              return;
+            }
+
             currentVisibleImage = filename;
             currentSeriesLastRead = chapterName;
 
             // Debounced save (~750ms after scrolling settles)
             clearTimeout(saveProgressTimeout);
             saveProgressTimeout = setTimeout(() => {
+              if (currentLoadToken !== activeReaderLoadToken) return;
               fetch("/api/progress", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -3895,6 +4051,7 @@ document.addEventListener("DOMContentLoaded", () => {
                   image: filename
                 })
               }).then((r) => r.ok ? r.json() : null).then((data) => {
+                if (currentLoadToken !== activeReaderLoadToken) return;
                 if (data && data.last_read) {
                   currentSeriesLastRead = data.last_read;
                 }
@@ -4182,6 +4339,8 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
     }
+
+    restorationFailedWithoutInteraction = false;
 
     // Ignore if system modifier keys are pressed
     if (e.metaKey || e.ctrlKey || e.altKey) {

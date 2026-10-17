@@ -402,9 +402,26 @@ Images are loaded lazily in reading order inside `.reader-page` containers:
 - Preference is saved per series (both local and remote) and persists across sessions.
 
 ### Progress Tracking Mechanics
-- Real-time page visibility is tracked using `IntersectionObserver` with `threshold: 0.1` and root margin `-10% 0px -40% 0px`.
-- As a page enters the focal zone, the reading position is updated in memory and debounced (400ms) before sending `POST /api/progress`.
-- On opening a chapter, the reader automatically smooth-scrolls to the last read page.
+- Real-time page visibility is tracked using `IntersectionObserver` with `threshold: [0, 0.25, 0.5, 0.75, 1.0]`.
+- As a page enters the focal zone (closest to `window.innerHeight * 0.6`), the reading position is updated in memory and debounced (~750ms) before sending `POST /api/progress`.
+- On opening a chapter with saved progress, the reader restores the saved position via an event-driven restoration lifecycle.
+
+### Reading-Progress Restoration Lifecycle & Bug Resolution
+- **Original Bug & Root Cause**:
+  - An intermittent bug previously caused chapters with saved progress (e.g. 50% / Page 15) to occasionally open at Page 1, subsequently overwriting the saved progress on the server with Page 1.
+  - **Root Cause**:
+    1. Synchronous premature invocation of `scrollIntoView()` on newly appended, unloaded DOM elements where `<img>` tags had no dimensions and CSS lacked `min-height`/`aspect-ratio`. Initial container `scrollHeight` was smaller than `window.innerHeight`, clamping initial scroll to `0`.
+    2. Lazy loading (`loading="lazy"`) starved offscreen target images while the viewport was trapped at `scrollY = 0`.
+    3. As Page 1 loaded and expanded, the target page was pushed further downward.
+    4. An arbitrary 300 ms timer (`isInitialResume`) expired before cold-cache/remote images finished loading, causing `IntersectionObserver` to detect Page 1 in the viewport and dispatch a debounced `POST /api/progress` overwriting the database.
+- **Implemented Fix (`static/app.js`)**:
+  1. **Explicit Restoration Lifecycle**: Replaced the arbitrary 300 ms timer with an explicit state machine (`isRestoringProgress = true`).
+  2. **Target Page Pre-loading**: When resuming, the target page image is rendered with `loading = "eager"` and `fetchPriority = "high"`, preventing lazy-load starvation regardless of initial scroll position.
+  3. **Event-Driven Layout-Shift Alignment**: A `ResizeObserver` on `readerContainer` and `load`/`error` listeners on the target image trigger `targetPage.scrollIntoView({ behavior: "instant", block: "start" })` via `requestAnimationFrame` as preceding images expand, settling the viewport at the target page.
+  4. **Deliberate User Interaction Release**: Listeners on `wheel`, `touchstart`, `touchmove`, `keydown`, and `mousedown` immediately terminate auto-scroll alignment when the user manually navigates, preventing the reader from fighting or jerking user input.
+  5. **Safe Timeout Failure (No Page 1 Overwrites)**: If the 6-second safety limit expires without alignment, `isRestoringProgress` terminates and `restorationFailedWithoutInteraction = true` is set. The observer is strictly blocked from overwriting `currentVisibleImage` or dispatching `/api/progress` with Page 1 until deliberate user interaction occurs.
+  6. **Monotonic Reader-Load Token**: `activeReaderLoadToken` increments on every `loadReader()` call. Stale in-flight `Promise.all` responses, image `onload` events, resize notifications, or debounced progress timers from earlier chapter navigation are discarded immediately.
+  7. **Comprehensive Cleanup**: `cancelActiveRestoration()` clears animation frame callbacks, disconnects observers, removes event listeners, and cancels safety timers on chapter change or reader exit (`switchView`). Normal progress tracking resumes seamlessly after restoration or user interaction.
 
 ### Segmented Timeline
 - Fixed at the bottom of the viewport (`.reader-progress-container`).
@@ -666,7 +683,7 @@ The following endpoints accept either local series names (e.g. `Berserk`) or rem
 ## 14. Testing Suite & Verification Procedures
 
 ### Test Suite Structure
-The test suite consists of **427 automated tests** organized across 11 modules:
+The test suite consists of **436 automated tests** organized across 12 modules:
 
 | Test Module | Tests | Focus Area |
 | :--- | :--- | :--- |
@@ -681,14 +698,16 @@ The test suite consists of **427 automated tests** organized across 11 modules:
 | `tests/test_editable_library_path.py` | 20 | Editable library path UI, server validation, URL and file rejection, permission error handling, pin list isolation across switches, and theme compatibility. |
 | `tests/test_per_library_pins.py` | 14 | Scoped per-library pins, canonical path normalization, safe idempotent legacy migration, CLI `--dir` isolation, UI switching isolation, relative/equivalent path resolution. |
 | `tests/test_cli_remote_url.py` | 13 | CLI remote URL argument handling, startup routing, error sanitization, launcher suppression of duplicate browser opens. |
+| `tests/test_reader_progress_restoration.py` | 8 | Reading-progress restoration lifecycle contracts, cached immediate alignment, delayed image download handling, layout shift realignment, Page 1 overwrite prevention, user interaction release, rapid chapter navigation token guards, and invalid identifier fallback. |
 
 ### Running the Test Suite
 
 ```bash
-# Run the entire test suite (all 427 tests)
+# Run the entire test suite (all 436 tests)
 python3 -m unittest discover -s tests -p "test_*.py" -v
 
 # Run a specific test module
+python3 -m unittest tests.test_reader_progress_restoration
 python3 -m unittest tests.test_editable_library_path
 python3 -m unittest tests.test_per_library_pins
 python3 -m unittest tests.test_keyboard_shortcuts
@@ -698,6 +717,7 @@ python3 -m unittest tests.test_weebcentral_provider
 python3 -m unittest tests.test_nhentai_provider
 
 # Alternatively, run a test module by file path
+python3 -m unittest tests/test_reader_progress_restoration.py
 python3 -m unittest tests/test_editable_library_path.py
 python3 -m unittest tests/test_per_library_pins.py
 python3 -m unittest tests/test_server.py
@@ -737,7 +757,7 @@ bash -n start-linux.sh
 - [x] Directory chapters + `.cbz` and `.zip` archive chapters with in-memory streaming.
 - [x] Continuous vertical reader with Spaced and Seamless modes (`Shift + S`).
 - [x] Segmented bottom progress timeline with hover preview and jump navigation.
-- [x] Auto-resuming reading progress via `IntersectionObserver`.
+- [x] Auto-resuming reading progress via event-driven restoration lifecycle with layout-shift alignment, target pre-loading, and safe timeout failure guards (normal real-world browser usage testing still recommended).
 - [x] Chapter bookmarking (`B`) and series reading style preferences.
 - [x] Read/Unread chapter completion toggle (`Shift + R`) with explicit unread persistence.
 - [x] Page screenshot capture (`S`) saving full-resolution images to `<Library>/Screenshots/<Series>/`.
@@ -761,7 +781,7 @@ bash -n start-linux.sh
 - [x] Remote browsing modal with collapsible provider disclosure and recent series manager.
 - [x] CLI remote URL launch support with automatic browser opening.
 - [x] Cross-platform launcher scripts (`start-mac.command`, `start-linux.sh`, `start-windows.bat`).
-- [x] Complete test suite with 427 passing unit and integration tests across 11 modules.
+- [x] Complete test suite with 436 passing unit and integration tests across 12 modules.
 
 ### Source-Dependent / Live Network Limitations
 - **Live Upstream Site Availability**: WeebCentral and nhentai providers connect to live third-party websites. Changes to upstream markup or anti-bot Cloudflare challenges (HTTP 403 / 503) can block requests during live execution, even though unit tests pass with offline fixtures.
@@ -791,6 +811,8 @@ bash -n start-linux.sh
    Safari aggressively caches favicons in `~/Library/Safari/Favicon Cache`. If a modified favicon does not display, clearing that folder and restarting Safari resolves the issue.
 7. **Archive File Corruption**:
    Corrupt `.cbz` or `.zip` archives are safely caught by `zipfile.BadZipFile`, returning an empty list (`[]`) and displaying a disabled state in the UI rather than crashing the server.
+8. **Reading-Progress Restoration Real-Browser Scope**:
+   The Node.js harness in `tests/test_reader_progress_restoration.py` verifies state transitions, overwrite prevention guards, token invalidation, and lifecycle contracts without third-party dependencies. However, real-world browser behaviors—such as asynchronous sub-pixel rendering on high-DPI displays, mobile Safari dynamic URL bar height shifts, and hardware-accelerated image decoders under extreme device memory pressure—cannot be fully simulated in synthetic headless harnesses. Continued normal real-world usage testing across diverse browser engines is recommended.
 
 ---
 
@@ -809,7 +831,7 @@ When extending or maintaining this project, future developers and coding agents 
 5. **Always Sanitize User & Remote Strings**:
    Remote titles, chapter names, authors, and synopses are untrusted external data. Use `textContent` or escape HTML before inserting into the DOM to prevent XSS.
 6. **Maintain Complete Test Coverage**:
-   Any new endpoint, provider, or CLI feature must include regression tests. Ensure all 427 tests pass before finishing any task:
+   Any new endpoint, provider, or CLI feature must include regression tests. Ensure all 436 tests pass before finishing any task:
    ```bash
    python3 -m unittest discover -s tests -p "test_*.py" -v
    ```
