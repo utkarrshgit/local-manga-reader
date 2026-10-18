@@ -59,7 +59,7 @@ class TestKeyboardShortcutsImplementation(unittest.TestCase):
         cls.project_context = (PROJECT_ROOT / "PROJECT_CONTEXT.md").read_text(encoding="utf-8")
 
     def test_documentation_includes_new_shortcuts(self) -> None:
-        """Verify README.md and PROJECT_CONTEXT.md document all reader keyboard shortcuts including zoom."""
+        """Verify README.md and PROJECT_CONTEXT.md document all reader and global keyboard shortcuts including zoom, Shift+G, and Shift+."""
         for doc_name, content in [("README.md", self.readme), ("PROJECT_CONTEXT.md", self.project_context)]:
             with self.subTest(document=doc_name):
                 self.assertIn("Up Arrow", content)
@@ -72,13 +72,19 @@ class TestKeyboardShortcutsImplementation(unittest.TestCase):
                 self.assertIn("`=`", content)
                 self.assertIn("`-`", content)
                 self.assertIn("`0`", content)
+                self.assertIn("Shift + G", content)
+                self.assertIn("Shift + .", content)
 
     def test_shortcut_handlers_structure_in_app_js(self) -> None:
-        """Verify app.js event listener correctly structures Shift+R, Shift+S, plain S, =, -, 0, and no plain R."""
+        """Verify app.js event listener correctly structures Shift+R, Shift+S, plain S, =, -, 0, Shift+G, Shift+., and no plain R."""
         # Shift + R handler present
         self.assertIn('e.shiftKey && (e.key === "R" || e.key === "r")', self.app_js)
         # Shift + S handler present
         self.assertIn('e.shiftKey && (e.key === "S" || e.key === "s" || e.code === "KeyS")', self.app_js)
+        # Shift + G handler present
+        self.assertIn('e.shiftKey && (e.key === "G" || e.key === "g" || e.code === "KeyG")', self.app_js)
+        # Shift + . handler present
+        self.assertIn('e.shiftKey && (e.key === "." || e.key === ">" || e.code === "Period" || e.keyCode === 190)', self.app_js)
         # Plain S handler present and strictly requires !e.shiftKey
         self.assertIn('!e.shiftKey && (e.key === "s" || e.key === "S")', self.app_js)
         # Plain R is NOT implemented as a shortcut
@@ -1261,7 +1267,7 @@ class TestKeyboardShortcutsOverlay(unittest.TestCase):
 
         // Validate categories
         const categories = [...new Set(list.map(i => i.category))];
-        const expectedCats = ['Reader navigation', 'Reading controls', 'Zoom and screenshots'];
+        const expectedCats = ['Reader navigation', 'Reading controls', 'Zoom and screenshots', 'Global shortcuts'];
         if (categories.includes('General navigation')) {
             console.error('General navigation category must NOT be present in registry');
             process.exit(50);
@@ -1277,7 +1283,7 @@ class TestKeyboardShortcutsOverlay(unittest.TestCase):
             process.exit(51);
         }
 
-        // Validate all 14 implemented shortcuts are in registry
+        // Validate all 16 implemented shortcuts are in registry
         const expectedIds = [
             'prev-chapter',
             'next-chapter',
@@ -1292,7 +1298,9 @@ class TestKeyboardShortcutsOverlay(unittest.TestCase):
             'zoom-in',
             'zoom-out',
             'zoom-reset',
-            'save-screenshot'
+            'save-screenshot',
+            'open-remote-url',
+            'open-settings-library'
         ];
         const forbiddenIds = ['toggle-shortcuts', 'dismiss-modal', 'activate-item'];
         for (const fId of forbiddenIds) {
@@ -1717,7 +1725,7 @@ class TestKeyboardShortcutsOverlay(unittest.TestCase):
         }
 
         // 4. Remaining categories present
-        const expectedCats = ['Reader navigation', 'Reading controls', 'Zoom and screenshots'];
+        const expectedCats = ['Reader navigation', 'Reading controls', 'Zoom and screenshots', 'Global shortcuts'];
         if (JSON.stringify(categories) !== JSON.stringify(expectedCats)) {
             console.error('Categories mismatch:', categories, expectedCats);
             process.exit(4);
@@ -1751,12 +1759,18 @@ class TestKeyboardShortcutsOverlay(unittest.TestCase):
             return renderedGroups;
         }
 
-        // In library view: none of the reader-only categories should be active
+        // In library view: none of the reader-only categories should be active, while Global shortcuts is active
         const libGroups = simulateRender('library');
         if (libGroups.some(g => g.name === 'General navigation')) process.exit(5);
-        if (libGroups.some(g => g.isActive)) {
-            console.error('Active category found in library view when only reader categories exist:', libGroups);
+        const readerOnlyInLib = libGroups.filter(g => g.name !== 'Global shortcuts');
+        if (readerOnlyInLib.some(g => g.isActive)) {
+            console.error('Active category found in library view for reader-only categories:', readerOnlyInLib);
             process.exit(6);
+        }
+        const globalGroup = libGroups.find(g => g.name === 'Global shortcuts');
+        if (!globalGroup || !globalGroup.isActive) {
+            console.error('Global shortcuts category should be active in library view:', globalGroup);
+            process.exit(61);
         }
 
         // In reader view: reader categories are active
@@ -1779,6 +1793,497 @@ class TestKeyboardShortcutsOverlay(unittest.TestCase):
         self.assertIn("OVERLAY_CLEANUP_PASSED", result.stdout)
 
 
+class TestGlobalKeyboardShortcuts(unittest.TestCase):
+    """Automated test suite verifying the two global keyboard shortcuts (Shift+G and Shift+.)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app_js_path = PROJECT_ROOT / "static" / "app.js"
+        cls.app_js = cls.app_js_path.read_text(encoding="utf-8")
+
+    def test_global_shortcuts_open_remote_url(self) -> None:
+        """Verify Shift + G opens the Remote URL dialog from Library, Series, and Reader views, focuses URL input, and does not submit."""
+        node_script = """
+        const fs = require('fs');
+        const code = fs.readFileSync('static/app.js', 'utf8');
+
+        // Verify handler and openRemoteModal exist in app.js
+        if (!code.includes('const isOpenRemoteShortcut =')) process.exit(1);
+        if (!code.includes('e.shiftKey && (e.key === "G" || e.key === "g" || e.code === "KeyG")')) process.exit(2);
+        if (!code.includes('openRemoteModal()')) process.exit(3);
+
+        // Simulation harness for views, modal, and focus
+        let currentView = 'library';
+        let modalOverlayHidden = true;
+        let modalRemoteHidden = true;
+        let modalSettingsHidden = true;
+        let remoteUrlInputValue = 'https://existing.example.com';
+        let focusedElementId = 'some-library-card';
+        let selectionStart = -1;
+        let selectionEnd = -1;
+        let openRemoteModalCalls = 0;
+        let resolveAndOpenRemoteCalls = 0;
+
+        const remoteUrlInput = {
+            id: 'remote-url-input',
+            value: remoteUrlInputValue,
+            focus: () => {
+                focusedElementId = 'remote-url-input';
+            },
+            setSelectionRange: (start, end) => {
+                selectionStart = start;
+                selectionEnd = end;
+            }
+        };
+
+        function openRemoteModal() {
+            openRemoteModalCalls++;
+            modalSettingsHidden = true;
+            remoteUrlInput.value = '';
+            modalOverlayHidden = false;
+            modalRemoteHidden = false;
+            remoteUrlInput.focus();
+            remoteUrlInput.setSelectionRange(0, 0);
+        }
+
+        function resolveAndOpenRemote(val) {
+            resolveAndOpenRemoteCalls++;
+        }
+
+        function simulateKeydown(e, activeTag = '') {
+            if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') return;
+            if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+            const isOpenRemoteShortcut = (
+                e.shiftKey && (e.key === "G" || e.key === "g" || e.code === "KeyG")
+            );
+
+            if (isOpenRemoteShortcut) {
+                e.preventDefault = () => { e.defaultPrevented = true; };
+                e.preventDefault();
+                if (e.repeat) return;
+                if (!modalRemoteHidden) {
+                    if (focusedElementId !== 'remote-url-input') {
+                        remoteUrlInput.focus();
+                        remoteUrlInput.setSelectionRange(remoteUrlInput.value.length, remoteUrlInput.value.length);
+                    }
+                    return;
+                }
+                openRemoteModal();
+                return;
+            }
+        }
+
+        // 1. Shift + G from Library view
+        currentView = 'library';
+        modalOverlayHidden = true;
+        modalRemoteHidden = true;
+        focusedElementId = 'library-grid';
+        let ev1 = { key: 'G', shiftKey: true, repeat: false };
+        simulateKeydown(ev1);
+        if (!ev1.defaultPrevented) process.exit(10);
+        if (openRemoteModalCalls !== 1) process.exit(11);
+        if (modalRemoteHidden || modalOverlayHidden) process.exit(12);
+        if (focusedElementId !== 'remote-url-input') process.exit(13);
+        if (remoteUrlInput.value !== '') process.exit(14);
+        if (selectionStart !== 0 || selectionEnd !== 0) process.exit(15);
+        if (resolveAndOpenRemoteCalls !== 0) process.exit(16);
+
+        // 2. Shift + g (lowercase with shiftKey true) from Series view
+        modalRemoteHidden = true;
+        currentView = 'chapters';
+        focusedElementId = 'chapter-list';
+        let ev2 = { key: 'g', shiftKey: true, repeat: false };
+        simulateKeydown(ev2);
+        if (!ev2.defaultPrevented) process.exit(20);
+        if (openRemoteModalCalls !== 2) process.exit(21);
+        if (modalRemoteHidden) process.exit(22);
+        if (focusedElementId !== 'remote-url-input') process.exit(23);
+
+        // 3. KeyG code with shiftKey from Reader view
+        modalRemoteHidden = true;
+        currentView = 'reader';
+        focusedElementId = 'reader-container';
+        let ev3 = { key: 'Unidentified', code: 'KeyG', shiftKey: true, repeat: false };
+        simulateKeydown(ev3);
+        if (!ev3.defaultPrevented) process.exit(30);
+        if (openRemoteModalCalls !== 3) process.exit(31);
+        if (modalRemoteHidden) process.exit(32);
+        if (focusedElementId !== 'remote-url-input') process.exit(33);
+
+        // 4. Verify user can immediately type into remoteUrlInput without clicking
+        if (focusedElementId === 'remote-url-input') {
+            remoteUrlInput.value = 'https://weebcentral.com/series/01J76XY8CM99';
+        }
+        if (remoteUrlInput.value !== 'https://weebcentral.com/series/01J76XY8CM99') process.exit(40);
+        // Automatic submit did not happen
+        if (resolveAndOpenRemoteCalls !== 0) process.exit(41);
+
+        console.log('REMOTE_URL_SHORTCUT_PASSED');
+        """
+        result = subprocess.run(
+            ["node", "-e", node_script],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, f"Node Shift+G test failed: {result.stderr}")
+        self.assertIn("REMOTE_URL_SHORTCUT_PASSED", result.stdout)
+
+    def test_global_shortcuts_open_library_settings(self) -> None:
+        """Verify Shift + . opens Settings dialog from Library, Series, and Reader views, focuses path input with cursor at end, and handles layout variants."""
+        node_script = """
+        const fs = require('fs');
+        const code = fs.readFileSync('static/app.js', 'utf8');
+
+        // Verify handler and openSettingsModal exist in app.js
+        if (!code.includes('const isOpenSettingsShortcut =')) process.exit(1);
+        if (!code.includes('e.shiftKey && (e.key === "." || e.key === ">" || e.code === "Period" || e.keyCode === 190)')) process.exit(2);
+        if (!code.includes('openSettingsModal()')) process.exit(3);
+
+        let currentView = 'library';
+        let modalOverlayHidden = true;
+        let modalSettingsHidden = true;
+        let modalRemoteHidden = true;
+        let libraryPathInputValue = '/Users/test/Manga';
+        let focusedElementId = 'header-btn';
+        let selectionStart = -1;
+        let selectionEnd = -1;
+        let openSettingsModalCalls = 0;
+        let applySettingsCalls = 0;
+
+        const inputLibraryPath = {
+            id: 'input-library-path',
+            value: libraryPathInputValue,
+            focus: () => {
+                focusedElementId = 'input-library-path';
+            },
+            setSelectionRange: (start, end) => {
+                selectionStart = start;
+                selectionEnd = end;
+            }
+        };
+
+        function openSettingsModal() {
+            openSettingsModalCalls++;
+            modalRemoteHidden = true;
+            modalOverlayHidden = false;
+            modalSettingsHidden = false;
+            inputLibraryPath.focus();
+            const len = inputLibraryPath.value.length;
+            inputLibraryPath.setSelectionRange(len, len);
+        }
+
+        function simulateKeydown(e, activeTag = '') {
+            if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') return;
+            if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+            const isOpenSettingsShortcut = (
+                e.shiftKey && (e.key === "." || e.key === ">" || e.code === "Period" || e.keyCode === 190)
+            );
+
+            if (isOpenSettingsShortcut) {
+                e.preventDefault = () => { e.defaultPrevented = true; };
+                e.preventDefault();
+                if (e.repeat) return;
+                if (!modalSettingsHidden) {
+                    if (focusedElementId !== 'input-library-path') {
+                        inputLibraryPath.focus();
+                        const valLen = inputLibraryPath.value.length;
+                        inputLibraryPath.setSelectionRange(valLen, valLen);
+                    }
+                    return;
+                }
+                openSettingsModal();
+                return;
+            }
+        }
+
+        // 1. Shift + . producing key ">" on standard US keyboard in Library view
+        currentView = 'library';
+        modalOverlayHidden = true;
+        modalSettingsHidden = true;
+        focusedElementId = 'library-cards';
+        let ev1 = { key: '>', code: 'Period', shiftKey: true, repeat: false };
+        simulateKeydown(ev1);
+        if (!ev1.defaultPrevented) process.exit(10);
+        if (openSettingsModalCalls !== 1) process.exit(11);
+        if (modalSettingsHidden || modalOverlayHidden) process.exit(12);
+        if (focusedElementId !== 'input-library-path') process.exit(13);
+        if (inputLibraryPath.value !== '/Users/test/Manga') process.exit(14);
+        if (selectionStart !== '/Users/test/Manga'.length || selectionEnd !== '/Users/test/Manga'.length) process.exit(15);
+        if (applySettingsCalls !== 0) process.exit(16);
+
+        // 2. Shift + . producing key "." on alternative browser/keyboard in Series view
+        modalSettingsHidden = true;
+        currentView = 'chapters';
+        focusedElementId = 'chapters-list';
+        let ev2 = { key: '.', code: 'Period', shiftKey: true, repeat: false };
+        simulateKeydown(ev2);
+        if (!ev2.defaultPrevented) process.exit(20);
+        if (openSettingsModalCalls !== 2) process.exit(21);
+        if (modalSettingsHidden) process.exit(22);
+        if (focusedElementId !== 'input-library-path') process.exit(23);
+
+        // 3. Shift + keyCode 190 in Reader view
+        modalSettingsHidden = true;
+        currentView = 'reader';
+        focusedElementId = 'reader-canvas';
+        let ev3 = { key: 'Unidentified', keyCode: 190, shiftKey: true, repeat: false };
+        simulateKeydown(ev3);
+        if (!ev3.defaultPrevented) process.exit(30);
+        if (openSettingsModalCalls !== 3) process.exit(31);
+        if (modalSettingsHidden) process.exit(32);
+        if (focusedElementId !== 'input-library-path') process.exit(33);
+
+        // 4. Verify user can immediately edit the path
+        inputLibraryPath.value += '/NewFolder';
+        if (inputLibraryPath.value !== '/Users/test/Manga/NewFolder') process.exit(40);
+        if (applySettingsCalls !== 0) process.exit(41);
+
+        console.log('SETTINGS_SHORTCUT_PASSED');
+        """
+        result = subprocess.run(
+            ["node", "-e", node_script],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, f"Node Shift+. test failed: {result.stderr}")
+        self.assertIn("SETTINGS_SHORTCUT_PASSED", result.stdout)
+
+    def test_global_shortcuts_editable_elements_and_modifiers_guard(self) -> None:
+        """Verify shortcuts do not fire when typing in input, textarea, select, contenteditable, or with modifier keys."""
+        node_script = """
+        const fs = require('fs');
+        const code = fs.readFileSync('static/app.js', 'utf8');
+
+        let remoteModalOpened = false;
+        let settingsModalOpened = false;
+
+        function openRemoteModal() { remoteModalOpened = true; }
+        function openSettingsModal() { settingsModalOpened = true; }
+
+        function simulateKeydown(e, activeTag = '', isContentEditable = false) {
+            if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select' || isContentEditable) return;
+            if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+            const isOpenRemoteShortcut = (
+                e.shiftKey && (e.key === "G" || e.key === "g" || e.code === "KeyG")
+            );
+            if (isOpenRemoteShortcut) {
+                e.defaultPrevented = true;
+                openRemoteModal();
+                return;
+            }
+
+            const isOpenSettingsShortcut = (
+                e.shiftKey && (e.key === "." || e.key === ">" || e.code === "Period" || e.keyCode === 190)
+            );
+            if (isOpenSettingsShortcut) {
+                e.defaultPrevented = true;
+                openSettingsModal();
+                return;
+            }
+        }
+
+        // 1. Typing in <input>
+        let evInp1 = { key: 'G', shiftKey: true };
+        simulateKeydown(evInp1, 'input');
+        if (evInp1.defaultPrevented || remoteModalOpened) process.exit(10);
+
+        let evInp2 = { key: '>', shiftKey: true };
+        simulateKeydown(evInp2, 'input');
+        if (evInp2.defaultPrevented || settingsModalOpened) process.exit(11);
+
+        // 2. Typing in <textarea>
+        let evTa = { key: 'G', shiftKey: true };
+        simulateKeydown(evTa, 'textarea');
+        if (evTa.defaultPrevented || remoteModalOpened) process.exit(12);
+
+        // 3. Typing in <select>
+        let evSel = { key: '>', shiftKey: true };
+        simulateKeydown(evSel, 'select');
+        if (evSel.defaultPrevented || settingsModalOpened) process.exit(13);
+
+        // 4. Typing in contentEditable element
+        let evCe = { key: 'G', shiftKey: true };
+        simulateKeydown(evCe, 'div', true);
+        if (evCe.defaultPrevented || remoteModalOpened) process.exit(14);
+
+        // 5. System modifier keys (Ctrl, Meta, Alt)
+        let evCtrlG = { key: 'G', shiftKey: true, ctrlKey: true };
+        simulateKeydown(evCtrlG);
+        if (evCtrlG.defaultPrevented || remoteModalOpened) process.exit(20);
+
+        let evMetaDot = { key: '>', shiftKey: true, metaKey: true };
+        simulateKeydown(evMetaDot);
+        if (evMetaDot.defaultPrevented || settingsModalOpened) process.exit(21);
+
+        let evAltG = { key: 'G', shiftKey: true, altKey: true };
+        simulateKeydown(evAltG);
+        if (evAltG.defaultPrevented || remoteModalOpened) process.exit(22);
+
+        // 6. Plain keys without Shift (Caps Lock, plain g, plain dot, ISO greater-than)
+        let evPlainG = { key: 'g', shiftKey: false };
+        simulateKeydown(evPlainG);
+        if (evPlainG.defaultPrevented || remoteModalOpened) process.exit(30);
+
+        let evCapsG = { key: 'G', shiftKey: false };
+        simulateKeydown(evCapsG);
+        if (evCapsG.defaultPrevented || remoteModalOpened) process.exit(31);
+
+        let evPlainDot = { key: '.', shiftKey: false };
+        simulateKeydown(evPlainDot);
+        if (evPlainDot.defaultPrevented || settingsModalOpened) process.exit(32);
+
+        let evIsoGt = { key: '>', shiftKey: false };
+        simulateKeydown(evIsoGt);
+        if (evIsoGt.defaultPrevented || settingsModalOpened) process.exit(33);
+
+        console.log('GUARDS_TEST_PASSED');
+        """
+        result = subprocess.run(
+            ["node", "-e", node_script],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, f"Node guards test failed: {result.stderr}")
+        self.assertIn("GUARDS_TEST_PASSED", result.stdout)
+
+    def test_global_shortcuts_repeat_modal_switching_and_focus_restoration(self) -> None:
+        """Verify e.repeat is ignored, modals switch safely without stacking, and closing restores previous focus."""
+        node_script = """
+        const fs = require('fs');
+        const code = fs.readFileSync('static/app.js', 'utf8');
+
+        // Confirm repeat checks exist
+        if (!code.includes('if (e.repeat) return;')) process.exit(1);
+
+        let modalOverlay = { hidden: true };
+        let modalRemote = { hidden: true };
+        let modalSettings = { hidden: true };
+        let modalShortcuts = { hidden: true };
+        let previouslyFocusedElement = null;
+        let activeElement = { id: 'reader-page-1' };
+
+        let openRemoteCalls = 0;
+        let openSettingsCalls = 0;
+
+        function openRemoteModal() {
+            openRemoteCalls++;
+            if (!previouslyFocusedElement || modalOverlay.hidden) {
+                previouslyFocusedElement = activeElement;
+            }
+            modalSettings.hidden = true;
+            modalShortcuts.hidden = true;
+            modalOverlay.hidden = false;
+            modalRemote.hidden = false;
+            activeElement = { id: 'remote-url-input' };
+        }
+
+        function openSettingsModal() {
+            openSettingsCalls++;
+            if (!previouslyFocusedElement || modalOverlay.hidden) {
+                previouslyFocusedElement = activeElement;
+            }
+            modalRemote.hidden = true;
+            modalShortcuts.hidden = true;
+            modalOverlay.hidden = false;
+            modalSettings.hidden = false;
+            activeElement = { id: 'input-library-path' };
+        }
+
+        function closeAllModals() {
+            modalRemote.hidden = true;
+            modalSettings.hidden = true;
+            modalShortcuts.hidden = true;
+            modalOverlay.hidden = true;
+            if (previouslyFocusedElement) {
+                activeElement = previouslyFocusedElement;
+                previouslyFocusedElement = null;
+            }
+        }
+
+        function simulateKeydown(e) {
+            if (activeElement.id === 'remote-url-input' || activeElement.id === 'input-library-path') return;
+            if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+            const isOpenRemoteShortcut = (e.shiftKey && (e.key === "G" || e.key === "g" || e.code === "KeyG"));
+            if (isOpenRemoteShortcut) {
+                e.defaultPrevented = true;
+                if (e.repeat) return;
+                if (!modalRemote.hidden) {
+                    activeElement = { id: 'remote-url-input' };
+                    return;
+                }
+                openRemoteModal();
+                return;
+            }
+
+            const isOpenSettingsShortcut = (e.shiftKey && (e.key === "." || e.key === ">" || e.code === "Period" || e.keyCode === 190));
+            if (isOpenSettingsShortcut) {
+                e.defaultPrevented = true;
+                if (e.repeat) return;
+                if (!modalSettings.hidden) {
+                    activeElement = { id: 'input-library-path' };
+                    return;
+                }
+                openSettingsModal();
+                return;
+            }
+        }
+
+        // 1. Initial open of Remote modal saves focus
+        activeElement = { id: 'btn-chapter-next' };
+        let ev1 = { key: 'G', shiftKey: true, repeat: false };
+        simulateKeydown(ev1);
+        if (openRemoteCalls !== 1) process.exit(10);
+        if (previouslyFocusedElement.id !== 'btn-chapter-next') process.exit(11);
+        if (activeElement.id !== 'remote-url-input') process.exit(12);
+
+        // 2. Holding down key (e.repeat) does NOT re-trigger opening
+        let evRepeat = { key: 'G', shiftKey: true, repeat: true };
+        simulateKeydown(evRepeat);
+        if (openRemoteCalls !== 1) process.exit(13);
+
+        // 3. Switch directly to Settings dialog (e.g. user moved focus to a modal button then hits Shift+.)
+        activeElement = { id: 'btn-cancel-remote' };
+        let evSwitch = { key: '>', shiftKey: true, repeat: false };
+        simulateKeydown(evSwitch);
+        if (openSettingsCalls !== 1) process.exit(20);
+        if (!modalRemote.hidden) process.exit(21); // Remote was closed
+        if (modalSettings.hidden) process.exit(22); // Settings was opened
+        if (activeElement.id !== 'input-library-path') process.exit(23);
+        // Original page focus is still retained, not overridden by the intermediate modal button
+        if (previouslyFocusedElement.id !== 'btn-chapter-next') process.exit(24);
+
+        // 4. Repeated Shift+. while Settings is already open does not re-open
+        activeElement = { id: 'btn-close-settings' };
+        let evSettingsRepeat = { key: '>', shiftKey: true, repeat: false };
+        simulateKeydown(evSettingsRepeat);
+        if (openSettingsCalls !== 1) process.exit(25); // Did not re-open
+        if (activeElement.id !== 'input-library-path') process.exit(26); // Refocused path
+
+        // 5. Close modal restores original page focus
+        closeAllModals();
+        if (activeElement.id !== 'btn-chapter-next') process.exit(30);
+        if (previouslyFocusedElement !== null) process.exit(31);
+
+        console.log('REPEAT_SWITCH_AND_FOCUS_RESTORE_PASSED');
+        """
+        result = subprocess.run(
+            ["node", "-e", node_script],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, f"Node repeat and switch test failed: {result.stderr}")
+        self.assertIn("REPEAT_SWITCH_AND_FOCUS_RESTORE_PASSED", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 

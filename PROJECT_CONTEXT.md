@@ -447,23 +447,42 @@ Images are loaded lazily in reading order inside `.reader-page` containers:
 | `=` | Zoom in manga pages by 10% (50%–300% range, temporary) |
 | `-` | Zoom out manga pages by 10% (50%–300% range, temporary) |
 | `0` | Reset zoom to 100% (temporary) |
+| `Shift + G` | Open Remote URL dialog and focus URL input (global across library, series, reader) |
+| `Shift + .` | Open library directory settings and focus path input (global across library, series, reader) |
 | `Shift + /` / `?` | Toggle keyboard shortcuts reference overlay (global across library, series, reader) |
 | `Escape` | Exit fullscreen / close modal / return to series view |
 
 ### Keyboard Shortcuts Reference Overlay
 The application provides an interactive, modal keyboard shortcuts cheat-sheet overlay (`#shortcutsModal`):
 - **Invocation**: Openable globally from any view (library, series detail, and reader) via `Shift + /` or `?`, or through the "Keyboard Shortcuts" item in the top-right profile dropdown.
-- **Single Source of Truth**: Rendered dynamically from the `KEYBOARD_SHORTCUTS` registry in `static/app.js`, organized strictly into three functional reader categories:
+- **Single Source of Truth**: Rendered dynamically from the `KEYBOARD_SHORTCUTS` registry in `static/app.js`, organized strictly into functional categories:
   1. **Reader navigation**: Previous/next chapter navigation (`Left Arrow`, `Right Arrow`), smooth vertical scrolling (`Up Arrow`, `Down Arrow`), and top/bottom chapter jumps (`Shift + Up Arrow`, `Shift + Down Arrow`).
   2. **Reading controls**: Fullscreen toggle (`F`), chapter bookmark (`B`), read/unread toggle (`Shift + R`), and spaced/seamless layout toggle (`Shift + S`).
   3. **Zoom and screenshots**: Temporary zoom in (`=`), zoom out (`-`), zoom reset (`0`), and page screenshot capture (`S`).
-- **Cleaned Registry Structure**: The redundant General navigation category and its entries (`toggle-shortcuts`, `dismiss-modal`, `activate-item`) have been eliminated from both the registry and overlay UI. No red active-context highlighting or category emphasis remains for general navigation.
+  4. **Global shortcuts**: Open Remote URL dialog (`Shift + G`) and open library directory settings (`Shift + .`), active across all views (Library, Series, Reader).
+- **Cleaned Registry Structure**: The redundant legacy general navigation items (`toggle-shortcuts`, `dismiss-modal`, `activate-item`) remain eliminated, while implemented global actions are centralized under the `Global shortcuts` category.
 - **Context-Aware Visual Feedback**:
-  - In the reader view, the active category header is subtly highlighted with the active theme's accent color (Crimson red or Kuromi purple).
-  - In non-reader views (library and series detail), shortcuts render in the neutral dark palette.
+  - In the reader view, the active category headers and rows are subtly highlighted with the active theme's accent color (Crimson red or Kuromi purple).
+  - In non-reader views (library and series detail), view-specific reader categories render in the neutral dark palette while global shortcuts highlight as active.
 - **Dismissal & Accessibility**:
   - Closed via `Escape` key, clicking the close button (`.btn-close`), or clicking outside the modal dialog onto the backdrop overlay.
   - Traps and handles focus cleanly, preserving underlying view state on close.
+
+### Global Shortcuts & Modal Focus Management
+- **Shift + G (Open Remote URL)**:
+  - Invokes `openRemoteModal()` globally across Library, Series detail, and Reader views.
+  - Automatically focuses `#remote-url-input` and places the text cursor at index 0 for immediate typing or pasting without clicking.
+  - Preserves existing remote validation, error reporting, provider handling, and Enter/click submission without auto-submitting.
+  - Safely switches if another modal is active without stacking duplicate dialogs or triggering on `e.repeat`.
+- **Shift + . (Open Library Directory Settings)**:
+  - Invokes `openSettingsModal()` globally across Library, Series detail, and Reader views.
+  - Automatically focuses `#input-library-path` and positions the cursor at the end of the current path for immediate editing or typing.
+  - Robustly matches both `e.key === "."` and `e.key === ">"` (produced when Shift is held on standard US keyboards) alongside `e.code === "Period"`.
+  - Strictly readies the field without auto-applying, auto-saving, or altering library path persistence; preserves Apply button and folder browsing.
+  - Guarded against concurrency overlap (`isOpeningSettings`) and repeated keystrokes (`e.repeat`).
+- **Global Keystroke Isolation**:
+  - Neither shortcut triggers while the user is actively typing in form inputs, textareas, select controls, or `contenteditable` elements.
+  - System modifier combinations (`Ctrl`, `Meta`, `Alt`) are ignored.
 
 > **Temporary Manga Reader Zoom Rules**:
 > - Zoom range: **50% to 300%** with a **100%** default, adjusting in 10 percentage point steps.

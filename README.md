@@ -117,7 +117,7 @@ python3 server.py --help
 ## Reading / Keyboard Shortcuts
 
 ### Keyboard Shortcuts Reference Overlay
-Press **`Shift + /`** or **`?`** from anywhere in the app (Library view, Series detail, or Reader view) to open the interactive **Keyboard Shortcuts** overlay. It can also be opened via the Profile dropdown menu. The overlay displays implemented shortcuts grouped by context (**Reader navigation**, **Reading controls**, and **Zoom and screenshots**), highlighting shortcuts active in the current view. The overlay can be dismissed with **`Escape`**, the close button, or clicking the backdrop.
+Press **`Shift + /`** or **`?`** from anywhere in the app (Library view, Series detail, or Reader view) to open the interactive **Keyboard Shortcuts** overlay. It can also be opened via the Profile dropdown menu. The overlay displays implemented shortcuts grouped by context (**Reader navigation**, **Reading controls**, **Zoom and screenshots**, and **Global shortcuts**), highlighting shortcuts active in the current view. The overlay can be dismissed with **`Escape`**, the close button, or clicking the backdrop.
 
 ### Reading Modes & Controls
 - **Spaced Mode**: Adds spacing and subtle borders between pages, ideal for traditional Japanese manga.
@@ -144,6 +144,8 @@ Press **`Shift + /`** or **`?`** from anywhere in the app (Library view, Series 
 | `=` / `+` | Zoom in by 10% (50% to 300% range, temporary) | Reader view |
 | `-` | Zoom out by 10% (50% to 300% range, temporary) | Reader view |
 | `0` | Reset zoom to 100% (temporary) | Reader view |
+| `Shift + G` | Open Remote URL dialog (automatically focuses URL input) | All views |
+| `Shift + .` | Open library directory settings (automatically focuses library path input) | All views |
 | `Shift + /` / `?` | Toggle keyboard shortcuts reference overlay | All views |
 | `Escape` | Exit fullscreen / close active modal or dropdown / return to series view | All views |
 

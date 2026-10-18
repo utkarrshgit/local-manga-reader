@@ -734,6 +734,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function openProfileModal() {
     toggleProfileDropdown(false);
+    if (!previouslyFocusedElement || (modalOverlay && modalOverlay.classList.contains("hidden"))) {
+      previouslyFocusedElement = document.activeElement;
+    }
     pendingAvatarBase64 = null;
     pendingRemoveAvatar = false;
 
@@ -773,6 +776,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (modalSettings) modalSettings.classList.add("hidden");
+    if (modalRemote) modalRemote.classList.add("hidden");
+    if (modalShortcuts) modalShortcuts.classList.add("hidden");
     if (modalOverlay) modalOverlay.classList.remove("hidden");
     if (modalProfile) modalProfile.classList.remove("hidden");
     if (profileNameInput) profileNameInput.focus();
@@ -798,33 +803,54 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  let isOpeningSettings = false;
+
   async function openSettingsModal() {
-    toggleProfileDropdown(false);
-    if (modalProfile) modalProfile.classList.add("hidden");
-
-    applySettings(currentSettings);
-    hideLibraryPathError();
-    if (btnApplyLibraryPath) btnApplyLibraryPath.disabled = false;
-    if (btnChangeFolder) btnChangeFolder.disabled = false;
-
-    if (inputLibraryPath) {
-      try {
-        const res = await fetch("/api/library");
-        if (res.ok) {
-          const data = await res.json();
-          if (data && data.library_path) {
-            inputLibraryPath.value = data.library_path;
-          } else {
-            inputLibraryPath.value = "";
-          }
-        }
-      } catch {
-        // preserve current input value on fetch error
+    if (isOpeningSettings) return;
+    isOpeningSettings = true;
+    try {
+      toggleProfileDropdown(false);
+      if (!previouslyFocusedElement || (modalOverlay && modalOverlay.classList.contains("hidden"))) {
+        previouslyFocusedElement = document.activeElement;
       }
-    }
+      if (modalProfile) modalProfile.classList.add("hidden");
+      if (modalRemote) modalRemote.classList.add("hidden");
+      if (modalShortcuts) modalShortcuts.classList.add("hidden");
 
-    if (modalOverlay) modalOverlay.classList.remove("hidden");
-    if (modalSettings) modalSettings.classList.remove("hidden");
+      applySettings(currentSettings);
+      hideLibraryPathError();
+      if (btnApplyLibraryPath) btnApplyLibraryPath.disabled = false;
+      if (btnChangeFolder) btnChangeFolder.disabled = false;
+
+      if (inputLibraryPath) {
+        try {
+          const res = await fetch("/api/library");
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.library_path) {
+              inputLibraryPath.value = data.library_path;
+            } else {
+              inputLibraryPath.value = "";
+            }
+          }
+        } catch {
+          // preserve current input value on fetch error
+        }
+      }
+
+      if (modalOverlay) modalOverlay.classList.remove("hidden");
+      if (modalSettings) modalSettings.classList.remove("hidden");
+
+      if (inputLibraryPath) {
+        inputLibraryPath.focus();
+        const valLen = inputLibraryPath.value.length;
+        if (typeof inputLibraryPath.setSelectionRange === "function") {
+          inputLibraryPath.setSelectionRange(valLen, valLen);
+        }
+      }
+    } finally {
+      isOpeningSettings = false;
+    }
   }
 
   // Shared Keyboard Shortcut Registry (Single Source of Truth)
@@ -1022,6 +1048,30 @@ document.addEventListener("DOMContentLoaded", () => {
         { keys: ["S"] }
       ],
       matches: (e) => !e.shiftKey && (e.key === "s" || e.key === "S")
+    },
+
+    // Global shortcuts
+    {
+      id: "open-remote-url",
+      category: "Global shortcuts",
+      description: "Open Remote URL",
+      context: "all",
+      contextLabel: "All views",
+      displayKeyCombinations: [
+        { keys: ["Shift", "G"], separator: "+" }
+      ],
+      matches: (e) => e.shiftKey && (e.key === "G" || e.key === "g" || e.code === "KeyG")
+    },
+    {
+      id: "open-settings-library",
+      category: "Global shortcuts",
+      description: "Open library directory settings",
+      context: "all",
+      contextLabel: "All views",
+      displayKeyCombinations: [
+        { keys: ["Shift", "."], separator: "+" }
+      ],
+      matches: (e) => e.shiftKey && (e.key === "." || e.key === ">" || e.code === "Period" || e.keyCode === 190)
     }
   ];
 
@@ -1472,8 +1522,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function openRemoteModal() {
     toggleProfileDropdown(false);
+    if (!previouslyFocusedElement || (modalOverlay && modalOverlay.classList.contains("hidden"))) {
+      previouslyFocusedElement = document.activeElement;
+    }
     if (modalProfile) modalProfile.classList.add("hidden");
     if (modalSettings) modalSettings.classList.add("hidden");
+    if (modalShortcuts) modalShortcuts.classList.add("hidden");
 
     if (remoteUrlInput) {
       remoteUrlInput.value = "";
@@ -1485,7 +1539,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (modalOverlay) modalOverlay.classList.remove("hidden");
     if (modalRemote) modalRemote.classList.remove("hidden");
-    if (remoteUrlInput) remoteUrlInput.focus();
+    if (remoteUrlInput) {
+      remoteUrlInput.focus();
+      if (typeof remoteUrlInput.setSelectionRange === "function") {
+        remoteUrlInput.setSelectionRange(0, 0);
+      }
+    }
   }
 
   async function resolveAndOpenRemote(inputStr) {
@@ -4581,6 +4640,52 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
+    // Global shortcut: Open Remote URL (Shift + G)
+    const isOpenRemoteShortcut = (
+      e.shiftKey && (e.key === "G" || e.key === "g" || e.code === "KeyG")
+    );
+
+    if (isOpenRemoteShortcut) {
+      e.preventDefault();
+      if (e.repeat) return;
+      stopHeldArrowScroll();
+      if (modalRemote && !modalRemote.classList.contains("hidden")) {
+        if (remoteUrlInput && document.activeElement !== remoteUrlInput) {
+          remoteUrlInput.focus();
+          if (typeof remoteUrlInput.setSelectionRange === "function") {
+            const len = remoteUrlInput.value.length;
+            remoteUrlInput.setSelectionRange(len, len);
+          }
+        }
+        return;
+      }
+      openRemoteModal();
+      return;
+    }
+
+    // Global shortcut: Open Library Directory Settings (Shift + .)
+    const isOpenSettingsShortcut = (
+      e.shiftKey && (e.key === "." || e.key === ">" || e.code === "Period" || e.keyCode === 190)
+    );
+
+    if (isOpenSettingsShortcut) {
+      e.preventDefault();
+      if (e.repeat) return;
+      stopHeldArrowScroll();
+      if (modalSettings && !modalSettings.classList.contains("hidden")) {
+        if (inputLibraryPath && document.activeElement !== inputLibraryPath) {
+          inputLibraryPath.focus();
+          const valLen = inputLibraryPath.value.length;
+          if (typeof inputLibraryPath.setSelectionRange === "function") {
+            inputLibraryPath.setSelectionRange(valLen, valLen);
+          }
+        }
+        return;
+      }
+      openSettingsModal();
+      return;
+    }
+
     // Modal trap / suppression: do not handle background shortcuts when modal is open
     if (modalShortcuts && !modalShortcuts.classList.contains("hidden")) {
       if (e.key === "Tab") {
@@ -5089,6 +5194,8 @@ document.addEventListener("DOMContentLoaded", () => {
     window.openShortcutsModal = openShortcutsModal;
     window.closeShortcutsModal = closeShortcutsModal;
     window.toggleShortcutsModal = toggleShortcutsModal;
+    window.openRemoteModal = openRemoteModal;
+    window.openSettingsModal = openSettingsModal;
     window.renderShortcutsOverlay = renderShortcutsOverlay;
     window.applyManualLibraryPath = applyManualLibraryPath;
     window.showLibraryPathError = showLibraryPathError;
