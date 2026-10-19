@@ -22,6 +22,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const libraryUnavailable = document.getElementById("library-unavailable");
   const unavailableFolderPath = document.getElementById("unavailable-folder-path");
   const btnReconnectFolder = document.getElementById("btn-reconnect-folder");
+  const libraryControls = document.querySelector(".library-controls");
+  const librarySearchCancel = document.getElementById("library-search-cancel");
   const pinnedSection = document.getElementById("pinned-section");
   const pinnedGrid = document.getElementById("pinned-grid");
   const pinnedSectionCount = document.getElementById("pinned-section-count");
@@ -1835,6 +1837,9 @@ document.addEventListener("DOMContentLoaded", () => {
     viewReader.classList.toggle("hidden", !isReader);
 
     if (viewName !== "library") {
+      if (libraryControls) {
+        libraryControls.classList.remove("search-expanded");
+      }
       if (libraryUnavailable) {
         libraryUnavailable.classList.add("hidden");
       }
@@ -4405,7 +4410,21 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // Library Search & Sort Controls
+  function enterSearchExpanded() {
+    if (window.innerWidth <= 640 && libraryControls) {
+      libraryControls.classList.add("search-expanded");
+    }
+  }
+
+  function exitSearchExpanded() {
+    if (libraryControls) {
+      libraryControls.classList.remove("search-expanded");
+    }
+  }
+
   if (librarySearch) {
+    librarySearch.addEventListener("focus", enterSearchExpanded);
+
     librarySearch.addEventListener("input", (e) => {
       librarySearchQuery = e.target.value;
       if (librarySearchClear) {
@@ -4421,9 +4440,31 @@ document.addEventListener("DOMContentLoaded", () => {
         if (librarySearchClear) librarySearchClear.classList.add("hidden");
         renderLibrarySeries();
         librarySearch.blur();
+        exitSearchExpanded();
       }
     });
   }
+
+  if (librarySearchCancel) {
+    librarySearchCancel.addEventListener("click", () => {
+      exitSearchExpanded();
+      if (librarySearch) {
+        librarySearch.blur();
+      }
+    });
+  }
+
+  document.addEventListener("click", (e) => {
+    if (libraryControls && !libraryControls.contains(e.target)) {
+      exitSearchExpanded();
+    }
+  });
+
+  window.addEventListener("resize", () => {
+    if (window.innerWidth > 640) {
+      exitSearchExpanded();
+    }
+  });
 
   if (librarySearchClear) {
     librarySearchClear.addEventListener("click", () => {

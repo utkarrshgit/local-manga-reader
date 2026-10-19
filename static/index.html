@@ -101,12 +101,21 @@
                 <path d="m20 20-3.5-3.5"/>
               </svg>
               <input type="text" id="library-search" class="library-search-input" placeholder="Search..." autocomplete="off" spellcheck="false" aria-label="Search series" />
-              <button id="library-search-clear" class="search-clear-btn hidden" aria-label="Clear search" title="Clear">
+              <button type="button" id="library-search-clear" class="search-clear-btn hidden" aria-label="Clear search" title="Clear">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M18 6 6 18M6 6l12 12"/>
                 </svg>
               </button>
             </div>
+            <button type="button" id="library-search-cancel" class="search-cancel-btn hidden" aria-label="Exit search">Cancel</button>
+            <button type="button" id="btn-open-remote" class="btn-open-remote" title="Open remote manga (WeebCentral, nhentai)" aria-label="Open remote series">
+              <svg class="remote-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="2" y1="12" x2="22" y2="12"/>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+              </svg>
+              <span>Remote</span>
+            </button>
             <div class="library-sort-wrapper">
               <label for="library-sort" class="sort-label">Sort</label>
               <select id="library-sort" class="library-sort-select" aria-label="Sort series">
@@ -118,14 +127,6 @@
                 <span class="sort-dir-arrow" id="library-sort-arrow" aria-hidden="true">↑</span>
               </button>
             </div>
-            <button type="button" id="btn-open-remote" class="btn-open-remote" title="Open remote manga (WeebCentral, nhentai)" aria-label="Open remote series">
-              <svg class="remote-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="2" y1="12" x2="22" y2="12"/>
-                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-              </svg>
-              <span>Remote</span>
-            </button>
           </div>
         </div>
       </div>
@@ -195,14 +196,16 @@
           <div class="series-cover-wrapper-large" id="series-cover-thumb-wrapper">
             <img id="series-cover-thumb" class="series-cover-large hidden" alt="" />
           </div>
-          <div class="series-links-panel hidden" id="series-links-panel">
-            <h2 class="series-links-heading">Links</h2>
-            <div class="series-links-list" id="series-links-list"></div>
-          </div>
         </aside>
         <div class="series-info-panel">
-          <h1 class="view-title series-title-large" id="series-title">Series Name</h1>
-          <div class="view-subtitle series-meta-row" id="series-meta">Loading chapters...</div>
+          <div class="series-header-main">
+            <h1 class="view-title series-title-large" id="series-title">Series Name</h1>
+            <div class="view-subtitle series-meta-row" id="series-meta">Loading chapters...</div>
+            <div class="series-links-panel hidden" id="series-links-panel">
+              <h2 class="series-links-heading">Links</h2>
+              <div class="series-links-list" id="series-links-list"></div>
+            </div>
+          </div>
 
           <!-- Series Action Bar: Resume Reading & Pin Series -->
           <div class="series-action-bar" id="series-action-bar">

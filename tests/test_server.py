@@ -1352,26 +1352,31 @@ class TestPhase6Features(unittest.TestCase):
         self.assertIn(b"btnRemoveBg", js_body)
 
     def test_external_links_under_cover_and_vertical_styling(self):
-        """34. External links are placed in the cover column beneath the cover thumbnail with vertical layout."""
+        """34. External links are placed beneath the series title and metadata, before action bar."""
         _, html_body = self._simulate_get("/")
         html_str = html_body.decode("utf-8")
 
-        # Verify series-cover-column exists and contains both cover thumb wrapper and links panel
+        # Verify series-cover-column and series-info-panel exist
         self.assertIn('class="series-cover-column"', html_str)
         cover_col_start = html_str.find('class="series-cover-column"')
         info_panel_start = html_str.find('class="series-info-panel"')
         self.assertLess(cover_col_start, info_panel_start)
 
-        # Verify series-links-panel is within cover column and before info panel
+        # Verify series-links-panel is beneath title and metadata, before action bar
+        title_pos = html_str.find('id="series-title"')
+        meta_pos = html_str.find('id="series-meta"')
         links_panel_pos = html_str.find('id="series-links-panel"')
-        self.assertGreater(links_panel_pos, cover_col_start)
-        self.assertLess(links_panel_pos, info_panel_start)
+        action_bar_pos = html_str.find('id="series-action-bar"')
+        self.assertGreater(meta_pos, title_pos)
+        self.assertGreater(links_panel_pos, meta_pos)
+        self.assertGreater(action_bar_pos, links_panel_pos)
 
-        # Check style.css has column display for links
+        # Check style.css has column display for cover column and series-links-panel styling
         _, css_body = self._simulate_get("/style.css")
         css_str = css_body.decode("utf-8")
         self.assertIn(".series-cover-column", css_str)
         self.assertIn("flex-direction: column", css_str)
+        self.assertIn(".series-links-panel", css_str)
 
     def test_get_library_endpoint(self):
         """35. GET /api/library returns current library path, exists status, and series count."""
