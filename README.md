@@ -2,6 +2,8 @@
 
 # { index }
 
+**Version**: `v2.1.1`
+
 A lightweight, zero-dependency local manga and manhwa reader that runs in your web browser.
 
 ## Features
@@ -124,6 +126,7 @@ Press **`Shift + /`** or **`?`** from anywhere in the app (Library view, Series 
 - **Seamless Mode**: Strips all padding and borders for a continuous unbroken scroll, ideal for Korean manhwa and webtoons.
 - **Fixed Translucent Header**: The reader header stays pinned with a subtle blur effect as you scroll, keeping navigation, chapter title, zoom, reading mode, and fullscreen controls accessible without obstructing artwork.
 - **Chapters Button**: Seamlessly navigates back to the series chapter list from the reader header, cleanly exiting fullscreen first if active.
+- **Fullscreen Reading Position Preservation**: Entering and exiting fullscreen preserves your active reading position smoothly across supported modern browsers (Chrome, Edge, Firefox, and Safari on macOS). In Safari, viewport alignment is automatically restored if the macOS Space transition causes an unexpected layout shift.
 - **Smooth & Continuous Scrolling**: Press or hold the Up/Down arrow keys for continuous, fluid reading scrolling.
 
 ### Keyboard Shortcuts
@@ -184,8 +187,8 @@ Your original manga image files and archives (`.cbz`/`.zip`) are **never modifie
 
 ## Known Limitations
 
-- **Safari Fullscreen Scroll Restoration**: When exiting fullscreen in Safari (macOS / WebKit), Safari's internal viewport restoration behavior may return the scroll position to where you were before entering fullscreen. Chrome, Edge, and Firefox preserve the active reading position correctly. If reading on Safari, scrolling or using page bookmarks before exiting fullscreen helps track your position.
 - **Upstream Cloudflare Protection**: When reading remote manga (e.g. WeebCentral, nhentai), upstream Cloudflare bot-protection or captcha challenge pages (HTTP 403 / 503) may temporarily prevent streaming until the upstream site relaxes verification.
+- **Upstream Rate Limits & Markup Changes**: Remote reading depends on third-party manga providers. High-frequency chapter navigation may trigger rate limits, and structural changes on upstream sites can impact scraping until providers are updated.
 
 ## Basic Troubleshooting
 

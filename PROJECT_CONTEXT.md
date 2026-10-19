@@ -1,6 +1,6 @@
 # PROJECT_CONTEXT.md: Local Manga & Manhwa Reader (`{ index }`)
 
-Technical documentation of current codebase architecture, implementation, storage, network APIs, security models, platform integrations, and operational procedures as of version 2.0.0.
+Technical documentation of current codebase architecture, implementation, storage, network APIs, security models, platform integrations, and operational procedures as of version 2.1.1.
 
 ---
 
@@ -10,7 +10,7 @@ Technical documentation of current codebase architecture, implementation, storag
 - **Application Name**: `{ index }` (Local Manga & Manhwa Reader).
 - **Favicon Artwork**: Japanese calligraphic **本** (hon / book / source) emblem with white strokes and a thick black sumi-e ink outline on a transparent canvas (`static/index-mark.svg`). Configured with explicit `color-scheme: light dark` to prevent Safari from adding synthetic white background squares.
 - **Browser Tab Title**: `{ index }`.
-- **Current Version**: `v2.0.0` (remote manga reading, provider architecture, SSRF security, CLI remote launching, and polished UI).
+- **Current Version**: `v2.1.1` (global shortcuts for remote URL and library settings, Safari fullscreen scroll restoration fix, reading progress restoration lifecycle, scoped per-library pins, editable library path management, keyboard shortcuts overlay).
 
 ### Core Purpose & Problem Solved
 Desktop and web-based comic/manga readers often require heavy database engines, cloud accounts, proprietary libraries, or invasive file re-organizations. `{ index }` is a zero-dependency, local-first web server and client built entirely with the Python 3 standard library and vanilla HTML5 / CSS3 / ES6 JavaScript.
@@ -203,19 +203,21 @@ local-manga-reader/
 ├── start-linux.sh                # Linux shell launcher (zenity/kdialog/CLI folder picker, browser launch)
 ├── start-windows.bat             # Windows batch launcher (PowerShell folder picker, browser launch)
 │
-└── tests/                        # Automated test suite package (427 tests across 11 modules)
+└── tests/                        # Automated test suite package (447 tests across 13 modules)
     ├── __init__.py               # Test package initialization
     ├── test_server.py            # 129 tests: Server, MangaLibrary, archives, user profile, themes, launchers
     ├── test_remote_providers.py  # 61 tests: Cache LRU/TTL, connection-level SSRF, registry, models, security
     ├── test_remote_reader.py     # 41 tests: Remote reader flow, progress, bookmarks, cache, local independence
     ├── test_weebcentral_provider.py # 39 tests: WeebCentral HTML parsing, chapter titles, service integration
     ├── test_nhentai_provider.py  # 36 tests: nhentai API/HTML parsing, ordered pages, format maps, security
+    ├── test_keyboard_shortcuts.py # 29 tests: Registry integrity, context styling, global shortcuts (Shift+G, Shift+.), reader navigation
     ├── test_remote_ui_integration.py # 27 tests: UI contracts, HTML escaping, mock sockets, series switching
-    ├── test_keyboard_shortcuts.py # 25 tests: Overlay cleanup, registry integrity, reader shortcuts, context styling
     ├── test_reading_state_semantics.py # 22 tests: Chapter completion semantics, unread preservation, state persistence
-    ├── test_editable_library_path.py # 20 tests: Editable library path field, server validation, error handling, pin isolation
+    ├── test_editable_library_path.py # 21 tests: Editable library path field, server validation, error handling, pin isolation
     ├── test_per_library_pins.py  # 14 tests: Per-library pin scoping, legacy migration, CLI --dir isolation
-    └── test_cli_remote_url.py    # 13 tests: CLI remote URL argument handling, startup routing, error sanitization
+    ├── test_cli_remote_url.py    # 13 tests: CLI remote URL argument handling, startup routing, error sanitization
+    ├── test_reader_progress_restoration.py # 8 tests: Reading-progress restoration lifecycle contracts, layout shift alignment
+    └── test_safari_fullscreen_restoration.py # 7 tests: Safari macOS fullscreen exit position capture, delayed scroll restoration, progress protection
 ```
 
 ---
@@ -422,6 +424,20 @@ Images are loaded lazily in reading order inside `.reader-page` containers:
   5. **Safe Timeout Failure (No Page 1 Overwrites)**: If the 6-second safety limit expires without alignment, `isRestoringProgress` terminates and `restorationFailedWithoutInteraction = true` is set. The observer is strictly blocked from overwriting `currentVisibleImage` or dispatching `/api/progress` with Page 1 until deliberate user interaction occurs.
   6. **Monotonic Reader-Load Token**: `activeReaderLoadToken` increments on every `loadReader()` call. Stale in-flight `Promise.all` responses, image `onload` events, resize notifications, or debounced progress timers from earlier chapter navigation are discarded immediately.
   7. **Comprehensive Cleanup**: `cancelActiveRestoration()` clears animation frame callbacks, disconnects observers, removes event listeners, and cancels safety timers on chapter change or reader exit (`switchView`). Normal progress tracking resumes seamlessly after restoration or user interaction.
+
+### Safari Fullscreen Scroll Restoration Lifecycle & Resolution
+- **Original Bug & Root Cause**:
+  - In Safari on macOS (WebKit), exiting fullscreen mode triggers an internal viewport layout recalculation across the native macOS Space transition animation.
+  - This browser-level layout resetting frequently forced `window.scrollY` back to the pre-fullscreen scroll offset, discarding any reading progress made during the fullscreen reading session.
+  - Furthermore, `IntersectionObserver` would detect the earlier page entering the viewport after the reset, queueing a debounced `POST /api/progress` that overwrote user progress on the server.
+- **Implemented Fix (`static/app.js`)**:
+  1. **Pre-Exit Viewport Position Capture**: `captureReaderPosition()` identifies the anchor `.reader-page` element crossing the upper reading line, its dataset filename, its relative top offset ratio (`anchorOffsetRatio`), `scrollY`, and `scrollRatio`. Captured continuously during fullscreen scrolling, before `exitFullscreen()`, in `updateFullscreenUI()`, and on `Escape`.
+  2. **Scheduled Multi-Delay Layout Settling**: When exiting fullscreen, `scheduleFullscreenRestoration()` marks `isFullscreenRestoring = true` and schedules layout checks across the macOS Space transition window (at 50ms, 150ms, 300ms, 500ms, 750ms, and 1000ms), as well as via `requestAnimationFrame` on scroll events.
+  3. **Instant Re-alignment**: If `isReaderPositionAligned()` detects a misalignment (tolerance 40px), `restoreReaderPosition()` immediately computes the exact target scroll position and restores alignment via `window.scrollTo({ top: targetScrollY, behavior: "instant" })`.
+  4. **Progress Overwrite Protection**: While `isFullscreenRestoring` is active, the `IntersectionObserver` callback returns early (`if (isFullscreenRestoring) return;`), preventing spurious progress persistence requests from overwriting the reading position on the server.
+  5. **Immediate User Interaction Release**: Any intentional user input (`wheel`, `touchstart`, `touchmove`, `mousedown`, or `keydown` other than `F` or `Escape`) cancels restoration immediately (`cancelFullscreenRestoration()`), ensuring the reader never fights user control.
+  6. **Chapter Navigation & View Cleanup**: `cancelActiveRestoration()` clears all pending animation frames and timeouts upon chapter switching or reader view dismissal.
+  7. **Neutrality on Compliant Browsers**: Browsers that naturally preserve scroll position upon exiting fullscreen (Chrome, Firefox, Edge) evaluate as already aligned (`isReaderPositionAligned() === true`), resulting in zero redundant scrolling or visual jitter.
 
 ### Segmented Timeline
 - Fixed at the bottom of the viewport (`.reader-progress-container`).
@@ -702,7 +718,7 @@ The following endpoints accept either local series names (e.g. `Berserk`) or rem
 ## 14. Testing Suite & Verification Procedures
 
 ### Test Suite Structure
-The test suite consists of **436 automated tests** organized across 12 modules:
+The test suite consists of **447 automated tests** organized across 13 modules:
 
 | Test Module | Tests | Focus Area |
 | :--- | :--- | :--- |
@@ -711,21 +727,23 @@ The test suite consists of **436 automated tests** organized across 12 modules:
 | `tests/test_remote_reader.py` | 41 | End-to-end remote reader flow, progress/bookmark/style persistence, cache hit/miss behavior, graceful error handling, local reading regression independence. |
 | `tests/test_weebcentral_provider.py` | 39 | WeebCentral HTML parsing, chapter title cleaning (excluding 'Last Read' badges and `<time>` tags), dynamic image endpoint fallback, service and HTTP integration. |
 | `tests/test_nhentai_provider.py` | 36 | nhentai API v2 & HTML scraper, ordered page generation, format mapping, domain allowlist enforcement, regression safety. |
+| `tests/test_keyboard_shortcuts.py` | 29 | Overlay cleanup, registry integrity, context highlighting, global shortcuts (`Shift + G`, `Shift + .`), input focus/cursor management, reader shortcuts (`=`, `-`, `0`, `Shift+R`, `S`), continuous scrolling. |
 | `tests/test_remote_ui_integration.py` | 27 | UI contracts, DOM safety, HTML escaping of untrusted titles, mock socket HTTP simulation, switching between local and remote series. |
-| `tests/test_keyboard_shortcuts.py` | 25 | Overlay cleanup (General navigation removal), registry integrity, context highlighting, reader shortcuts (`=`, `-`, `0`, `Shift+R`, `S`), continuous held-arrow scrolling, reader header layout. |
 | `tests/test_reading_state_semantics.py` | 22 | Explicit vs natural chapter completion semantics, unread preservation during navigation and progress updates, local and remote state persistence. |
-| `tests/test_editable_library_path.py` | 20 | Editable library path UI, server validation, URL and file rejection, permission error handling, pin list isolation across switches, and theme compatibility. |
+| `tests/test_editable_library_path.py` | 21 | Editable library path UI, server validation, URL and file rejection, permission error handling, pin list isolation across switches, and theme compatibility. |
 | `tests/test_per_library_pins.py` | 14 | Scoped per-library pins, canonical path normalization, safe idempotent legacy migration, CLI `--dir` isolation, UI switching isolation, relative/equivalent path resolution. |
 | `tests/test_cli_remote_url.py` | 13 | CLI remote URL argument handling, startup routing, error sanitization, launcher suppression of duplicate browser opens. |
 | `tests/test_reader_progress_restoration.py` | 8 | Reading-progress restoration lifecycle contracts, cached immediate alignment, delayed image download handling, layout shift realignment, Page 1 overwrite prevention, user interaction release, rapid chapter navigation token guards, and invalid identifier fallback. |
+| `tests/test_safari_fullscreen_restoration.py` | 7 | Safari macOS fullscreen exit position capture, delayed scroll reset detection and restoration, reading progress protection, instant release on user interaction, navigation cancellation, and compliant browser neutrality. |
 
 ### Running the Test Suite
 
 ```bash
-# Run the entire test suite (all 436 tests)
+# Run the entire test suite (all 447 tests)
 python3 -m unittest discover -s tests -p "test_*.py" -v
 
 # Run a specific test module
+python3 -m unittest tests.test_safari_fullscreen_restoration
 python3 -m unittest tests.test_reader_progress_restoration
 python3 -m unittest tests.test_editable_library_path
 python3 -m unittest tests.test_per_library_pins
@@ -736,6 +754,7 @@ python3 -m unittest tests.test_weebcentral_provider
 python3 -m unittest tests.test_nhentai_provider
 
 # Alternatively, run a test module by file path
+python3 -m unittest tests/test_safari_fullscreen_restoration.py
 python3 -m unittest tests/test_reader_progress_restoration.py
 python3 -m unittest tests/test_editable_library_path.py
 python3 -m unittest tests/test_per_library_pins.py
@@ -786,6 +805,8 @@ bash -n start-linux.sh
 - [x] Per-library pinned series scoped by canonical path (`pinned_by_library`) with idempotent legacy migration and CLI `--dir` isolation.
 - [x] Editable library path field in Settings modal with server validation, error handling, and per-library pin isolation.
 - [x] Keyboard shortcuts reference overlay (`Shift + /` / `?`) with context-aware reader categories (Reader navigation, Reading controls, Zoom/screenshot) and clean dismissal.
+- [x] Global keyboard shortcuts for Remote URL (`Shift + G`) and Library Settings (`Shift + .`) with automated input focus and cursor positioning.
+- [x] Safari fullscreen scroll restoration and progress protection across macOS Space transitions with user-interaction cancellation.
 - [x] Viewport-centered series page header title with responsive truncation.
 - [x] Cover and hero background fallback hierarchies.
 - [x] Editorial dark UI with Crimson and Kuromi dual themes.
@@ -800,7 +821,7 @@ bash -n start-linux.sh
 - [x] Remote browsing modal with collapsible provider disclosure and recent series manager.
 - [x] CLI remote URL launch support with automatic browser opening.
 - [x] Cross-platform launcher scripts (`start-mac.command`, `start-linux.sh`, `start-windows.bat`).
-- [x] Complete test suite with 436 passing unit and integration tests across 12 modules.
+- [x] Complete test suite with 447 passing unit and integration tests across 13 modules.
 
 ### Source-Dependent / Live Network Limitations
 - **Live Upstream Site Availability**: WeebCentral and nhentai providers connect to live third-party websites. Changes to upstream markup or anti-bot Cloudflare challenges (HTTP 403 / 503) can block requests during live execution, even though unit tests pass with offline fixtures.
@@ -816,10 +837,10 @@ bash -n start-linux.sh
 
 ## 16. Known Limitations, Edge Cases & Operational Notes
 
-1. **Safari Fullscreen Scroll Restoration**:
-   When exiting fullscreen in Safari (macOS / WebKit), Safari's internal layout restoration and macOS Space transition can reset the window scroll position to where it was before entering fullscreen. A lightweight, bounded workaround in `static/app.js` captures the active `.reader-page` element and viewport-relative offset immediately prior to exiting fullscreen, monitors delayed browser layout settling across the Space transition, restores the scroll alignment if an unexpected shift occurs, and guards `IntersectionObserver` progress tracking against transient glitch overwrites. Deliberate user scrolling immediately cancels restoration.
-2. **Upstream Cloudflare Protection**:
+1. **Upstream Cloudflare Protection**:
    If an upstream provider (such as nhentai or WeebCentral) activates strict Cloudflare challenge pages (e.g. Under Attack Mode), requests will return HTTP 403 or 503. The server catches these and returns clean error messages rather than hanging.
+2. **Third-Party Provider Rate Limits & Upstream Markup**:
+   Rapidly navigating across multiple remote chapters may trigger upstream CDN throttling. Changes in upstream website DOM structures may require scraper updates.
 3. **WeebCentral Dynamic Images**:
    WeebCentral occasionally serves chapter pages via a secondary HTMX endpoint `/chapters/{id}/images`. The provider automatically detects empty `#chapter-images` containers and falls back to requesting this dynamic fragment.
 4. **nhentai Gallery Representation**:
@@ -830,8 +851,8 @@ bash -n start-linux.sh
    Safari aggressively caches favicons in `~/Library/Safari/Favicon Cache`. If a modified favicon does not display, clearing that folder and restarting Safari resolves the issue.
 7. **Archive File Corruption**:
    Corrupt `.cbz` or `.zip` archives are safely caught by `zipfile.BadZipFile`, returning an empty list (`[]`) and displaying a disabled state in the UI rather than crashing the server.
-8. **Reading-Progress Restoration Real-Browser Scope**:
-   The Node.js harness in `tests/test_reader_progress_restoration.py` verifies state transitions, overwrite prevention guards, token invalidation, and lifecycle contracts without third-party dependencies. However, real-world browser behaviors—such as asynchronous sub-pixel rendering on high-DPI displays, mobile Safari dynamic URL bar height shifts, and hardware-accelerated image decoders under extreme device memory pressure—cannot be fully simulated in synthetic headless harnesses. Continued normal real-world usage testing across diverse browser engines is recommended.
+8. **Automated Test Coverage vs. Real-Browser Scope**:
+   The Node.js test harnesses (`tests/test_reader_progress_restoration.py` and `tests/test_safari_fullscreen_restoration.py`) verify DOM state transitions, overwrite prevention guards, token invalidation, layout-shift alignments, and lifecycle contracts without third-party dependencies. However, synthetic headless testing cannot fully replicate GPU compositor timing, macOS Space window animation delays, mobile Safari dynamic address bar resizing, or high-DPI sub-pixel rendering. Ongoing real-browser validation across diverse engines and operating systems remains recommended.
 
 ---
 
@@ -850,7 +871,7 @@ When extending or maintaining this project, future developers and coding agents 
 5. **Always Sanitize User & Remote Strings**:
    Remote titles, chapter names, authors, and synopses are untrusted external data. Use `textContent` or escape HTML before inserting into the DOM to prevent XSS.
 6. **Maintain Complete Test Coverage**:
-   Any new endpoint, provider, or CLI feature must include regression tests. Ensure all 436 tests pass before finishing any task:
+   Any new endpoint, provider, or CLI feature must include regression tests. Ensure all 447 tests pass before finishing any task:
    ```bash
    python3 -m unittest discover -s tests -p "test_*.py" -v
    ```
