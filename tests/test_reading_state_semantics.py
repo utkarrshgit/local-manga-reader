@@ -733,6 +733,43 @@ class TestReadingStateSemantics(unittest.TestCase):
         self.assertIn(".btn-resume-reading .resume-icon", css_text)
         self.assertIn("fill: #FFFFFF !important;", css_text)
 
+    def test_series_page_background_and_mobile_action_bar_layering(self):
+        """
+        Verify CSS layering:
+        - .series-hero-banner has z-index: 0 to confine background effects to the background layer
+        - .series-detail-layout has z-index: 1 to render foreground content above background layer
+        - In mobile media query, .series-action-bar has position: relative and z-index: 10 to render
+          cleanly above the cover wrapper's shadow (box-shadow: 0 20px 48px rgba(0, 0, 0, 0.70))
+        - Cover shadow remains preserved
+        """
+        css_file = PROJECT_ROOT / "static" / "style.css"
+        css_text = css_file.read_text(encoding="utf-8")
+
+        # 1. Background hero banner confined with z-index: 0
+        banner_idx = css_text.find(".series-hero-banner {")
+        self.assertNotEqual(banner_idx, -1)
+        banner_block = css_text[banner_idx:css_text.find("}", banner_idx)]
+        self.assertIn("z-index: 0;", banner_block)
+
+        # 2. Foreground detail layout with z-index: 1
+        detail_idx = css_text.find(".series-detail-layout {")
+        self.assertNotEqual(detail_idx, -1)
+        detail_block = css_text[detail_idx:css_text.find("}", detail_idx)]
+        self.assertIn("z-index: 1;", detail_block)
+
+        # 3. Preserved cover wrapper shadow
+        self.assertIn("box-shadow: 0 20px 48px rgba(0, 0, 0, 0.70);", css_text)
+
+        # 4. Mobile series-action-bar elevated above cover shadow
+        mobile_idx = css_text.find("@media (max-width: 640px)")
+        self.assertNotEqual(mobile_idx, -1)
+        mobile_css = css_text[mobile_idx:]
+        action_bar_mobile_idx = mobile_css.find(".series-action-bar {")
+        self.assertNotEqual(action_bar_mobile_idx, -1)
+        action_bar_block = mobile_css[action_bar_mobile_idx:mobile_css.find("}", action_bar_mobile_idx)]
+        self.assertIn("position: relative;", action_bar_block)
+        self.assertIn("z-index: 10;", action_bar_block)
+
 
 if __name__ == "__main__":
     unittest.main()

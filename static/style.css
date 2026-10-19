@@ -1100,6 +1100,7 @@ body.series-active .header-series-nav {
    ========================================= */
 .series-hero-banner {
   position: relative;
+  z-index: 0;
   width: 100vw;
   margin-left: calc(-50vw + 50%);
   margin-right: calc(-50vw + 50%);
@@ -1148,6 +1149,7 @@ body.series-active .header-series-nav {
 
 .series-detail-layout {
   position: relative;
+  z-index: 1;
   display: flex;
   gap: 36px;
   align-items: flex-start;
@@ -3485,6 +3487,8 @@ body.in-fullscreen .reader-progress-container {
   }
 
   .series-action-bar {
+    position: relative;
+    z-index: 10;
     grid-column: 1 / -1;
     display: flex;
     flex-direction: row;
