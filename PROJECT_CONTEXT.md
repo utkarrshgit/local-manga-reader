@@ -10,7 +10,7 @@ Technical documentation of current codebase architecture, implementation, storag
 - **Application Name**: `{ index }` (Local Manga & Manhwa Reader).
 - **Favicon Artwork**: Japanese calligraphic **本** (hon / book / source) emblem with white strokes and a thick black sumi-e ink outline on a transparent canvas (`static/index-mark.svg`). Configured with explicit `color-scheme: light dark` to prevent Safari from adding synthetic white background squares.
 - **Browser Tab Title**: `{ index }`.
-- **Current Version**: `v2.1.1` (global shortcuts for remote URL and library settings, Safari fullscreen scroll restoration fix, reading progress restoration lifecycle, scoped per-library pins, editable library path management, keyboard shortcuts overlay).
+- **Current Version**: `v2.1.2` (automatic retries for failed manga page images over Tailscale/network hiccups, global shortcuts for remote URL and library settings, Safari fullscreen scroll restoration fix, reading progress restoration lifecycle, scoped per-library pins, editable library path management, keyboard shortcuts overlay).
 
 ### Core Purpose & Problem Solved
 Desktop and web-based comic/manga readers often require heavy database engines, cloud accounts, proprietary libraries, or invasive file re-organizations. `{ index }` is a zero-dependency, local-first web server and client built entirely with the Python 3 standard library and vanilla HTML5 / CSS3 / ES6 JavaScript.
@@ -203,7 +203,7 @@ local-manga-reader/
 ├── start-linux.sh                # Linux shell launcher (zenity/kdialog/CLI folder picker, browser launch)
 ├── start-windows.bat             # Windows batch launcher (PowerShell folder picker, browser launch)
 │
-└── tests/                        # Automated test suite package (447 tests across 13 modules)
+└── tests/                        # Automated test suite package (456 tests across 14 modules)
     ├── __init__.py               # Test package initialization
     ├── test_server.py            # 129 tests: Server, MangaLibrary, archives, user profile, themes, launchers
     ├── test_remote_providers.py  # 61 tests: Cache LRU/TTL, connection-level SSRF, registry, models, security
@@ -216,6 +216,7 @@ local-manga-reader/
     ├── test_editable_library_path.py # 21 tests: Editable library path field, server validation, error handling, pin isolation
     ├── test_per_library_pins.py  # 14 tests: Per-library pin scoping, legacy migration, CLI --dir isolation
     ├── test_cli_remote_url.py    # 13 tests: CLI remote URL argument handling, startup routing, error sanitization
+    ├── test_local_image_retry.py # 9 tests: Automatic page image retry progression (1s, 2s, 4s), exhaustion fallback, error deduplication, chapter navigation cancellation, and cache-busting URL formatting
     ├── test_reader_progress_restoration.py # 8 tests: Reading-progress restoration lifecycle contracts, layout shift alignment
     └── test_safari_fullscreen_restoration.py # 7 tests: Safari macOS fullscreen exit position capture, delayed scroll restoration, progress protection
 ```
@@ -438,6 +439,20 @@ Images are loaded lazily in reading order inside `.reader-page` containers:
   5. **Immediate User Interaction Release**: Any intentional user input (`wheel`, `touchstart`, `touchmove`, `mousedown`, or `keydown` other than `F` or `Escape`) cancels restoration immediately (`cancelFullscreenRestoration()`), ensuring the reader never fights user control.
   6. **Chapter Navigation & View Cleanup**: `cancelActiveRestoration()` clears all pending animation frames and timeouts upon chapter switching or reader view dismissal.
   7. **Neutrality on Compliant Browsers**: Browsers that naturally preserve scroll position upon exiting fullscreen (Chrome, Firefox, Edge) evaluate as already aligned (`isReaderPositionAligned() === true`), resulting in zero redundant scrolling or visual jitter.
+
+### Automatic Page Image Retry Lifecycle & Network Resilience (Tailscale Fix)
+- **Original Issue & Tailscale Context**:
+  - When accessing the reader on mobile devices over Tailscale or intermittently lossy Wi-Fi networks, temporary packet drops or socket interruptions could cause individual local manga page images to fail loading.
+  - Previously, failed images remained blank or displayed a broken image indicator with `.image-load-failed`, requiring the user to manually locate and press the "Failed to load page. Click to retry" button for every dropped page.
+- **Implemented Fix (`static/app.js`)**:
+  1. **Automatic Exponential Retry Progression**: When a page image encounters a load error (`imgEl.onerror`), the reader automatically retries up to **3 additional times** after the initial request, with increasing backoff delays of approximately **1 second**, **2 seconds**, and **4 seconds** (`AUTO_RETRY_DELAYS = [1000, 2000, 4000]`).
+  2. **Manual Retry Button Preservation**: If all 3 automatic attempts fail, the reader falls back to the existing error UI (`.image-load-failed` placeholder) and attaches the manual Retry button (`.reader-image-retry` with `Failed to load page. Click to retry`). Clicking the manual button removes the error UI, resets the retry count to 0, and initiates a fresh load cycle.
+  3. **Duplicate Event Deduplication**: While an automatic retry timer is actively pending (`retryTimeoutId !== null`), subsequent duplicate `onerror` events on the same image element are safely ignored without scheduling redundant timers or advancing the retry counter.
+  4. **State Reset on Successful Load**: Once an image loads successfully (`imgEl.onload`), `isLoaded` is set to `true`, `autoRetryCount` resets to 0, any pending retry timer is cancelled, `.image-load-failed` is removed, and any existing manual retry button is removed. Subsequent spurious error events on an already-loaded image are discarded (`if (isLoaded || (imgEl.complete && imgEl.naturalWidth > 0)) return;`).
+  5. **Chapter Navigation & View Cancellation**: Active retry timers are tracked in `activeReaderRetryTimers`. Switching chapters in `loadReader()` or switching away from the reader in `switchView()` immediately executes `cancelActiveReaderRetries()`, clearing all pending `setTimeout` IDs and emptying the set to prevent background retry activity after leaving a chapter.
+  6. **Reader Load-Token Guards**: Asynchronous image event callbacks check `if (currentLoadToken !== activeReaderLoadToken) return;`. Stale network responses or late callbacks from earlier chapters cannot modify the new chapter's DOM or trigger unwanted retries.
+  7. **Cache-Busting URL Query Parameter**: Retries use `getRetryUrl(baseUrl)` to append or replace `_retry=<timestamp>`. This bypasses browser-level socket/cache failure retention and forces a fresh network request across Tailscale without altering backend API endpoints, image routing, or caching semantics.
+  8. **Zero New Dependencies**: Implemented strictly with standard browser DOM APIs and timers without third-party libraries.
 
 ### Segmented Timeline
 - Fixed at the bottom of the viewport (`.reader-progress-container`).
@@ -718,7 +733,7 @@ The following endpoints accept either local series names (e.g. `Berserk`) or rem
 ## 14. Testing Suite & Verification Procedures
 
 ### Test Suite Structure
-The test suite consists of **447 automated tests** organized across 13 modules:
+The test suite consists of **456 automated tests** organized across 14 modules:
 
 | Test Module | Tests | Focus Area |
 | :--- | :--- | :--- |
@@ -733,16 +748,18 @@ The test suite consists of **447 automated tests** organized across 13 modules:
 | `tests/test_editable_library_path.py` | 21 | Editable library path UI, server validation, URL and file rejection, permission error handling, pin list isolation across switches, and theme compatibility. |
 | `tests/test_per_library_pins.py` | 14 | Scoped per-library pins, canonical path normalization, safe idempotent legacy migration, CLI `--dir` isolation, UI switching isolation, relative/equivalent path resolution. |
 | `tests/test_cli_remote_url.py` | 13 | CLI remote URL argument handling, startup routing, error sanitization, launcher suppression of duplicate browser opens. |
+| `tests/test_local_image_retry.py` | 9 | Automatic page image retry progression (1s, 2s, 4s), exhaustion fallback to manual retry button, deduplication of multiple error events, navigation timer cancellation, stale chapter token isolation, and cache-busting URL formatting. |
 | `tests/test_reader_progress_restoration.py` | 8 | Reading-progress restoration lifecycle contracts, cached immediate alignment, delayed image download handling, layout shift realignment, Page 1 overwrite prevention, user interaction release, rapid chapter navigation token guards, and invalid identifier fallback. |
 | `tests/test_safari_fullscreen_restoration.py` | 7 | Safari macOS fullscreen exit position capture, delayed scroll reset detection and restoration, reading progress protection, instant release on user interaction, navigation cancellation, and compliant browser neutrality. |
 
 ### Running the Test Suite
 
 ```bash
-# Run the entire test suite (all 447 tests)
+# Run the entire test suite (all 456 tests)
 python3 -m unittest discover -s tests -p "test_*.py" -v
 
 # Run a specific test module
+python3 -m unittest tests.test_local_image_retry
 python3 -m unittest tests.test_safari_fullscreen_restoration
 python3 -m unittest tests.test_reader_progress_restoration
 python3 -m unittest tests.test_editable_library_path
@@ -754,6 +771,7 @@ python3 -m unittest tests.test_weebcentral_provider
 python3 -m unittest tests.test_nhentai_provider
 
 # Alternatively, run a test module by file path
+python3 -m unittest tests/test_local_image_retry.py
 python3 -m unittest tests/test_safari_fullscreen_restoration.py
 python3 -m unittest tests/test_reader_progress_restoration.py
 python3 -m unittest tests/test_editable_library_path.py
@@ -821,7 +839,8 @@ bash -n start-linux.sh
 - [x] Remote browsing modal with collapsible provider disclosure and recent series manager.
 - [x] CLI remote URL launch support with automatic browser opening.
 - [x] Cross-platform launcher scripts (`start-mac.command`, `start-linux.sh`, `start-windows.bat`).
-- [x] Complete test suite with 447 passing unit and integration tests across 13 modules.
+- [x] Automatic retries for failed manga page images with exponential backoff (1s, 2s, 4s), deduplication, chapter navigation cancellation, reader load-token guards, cache-busting query parameter, and manual retry fallback (tested on mobile over Tailscale).
+- [x] Complete test suite with 456 passing unit and integration tests across 14 modules.
 
 ### Source-Dependent / Live Network Limitations
 - **Live Upstream Site Availability**: WeebCentral and nhentai providers connect to live third-party websites. Changes to upstream markup or anti-bot Cloudflare challenges (HTTP 403 / 503) can block requests during live execution, even though unit tests pass with offline fixtures.
@@ -851,8 +870,8 @@ bash -n start-linux.sh
    Safari aggressively caches favicons in `~/Library/Safari/Favicon Cache`. If a modified favicon does not display, clearing that folder and restarting Safari resolves the issue.
 7. **Archive File Corruption**:
    Corrupt `.cbz` or `.zip` archives are safely caught by `zipfile.BadZipFile`, returning an empty list (`[]`) and displaying a disabled state in the UI rather than crashing the server.
-8. **Automated Test Coverage vs. Real-Browser Scope**:
-   The Node.js test harnesses (`tests/test_reader_progress_restoration.py` and `tests/test_safari_fullscreen_restoration.py`) verify DOM state transitions, overwrite prevention guards, token invalidation, layout-shift alignments, and lifecycle contracts without third-party dependencies. However, synthetic headless testing cannot fully replicate GPU compositor timing, macOS Space window animation delays, mobile Safari dynamic address bar resizing, or high-DPI sub-pixel rendering. Ongoing real-browser validation across diverse engines and operating systems remains recommended.
+8. **Automated Test Coverage vs. Real-Browser Scope & Retry Simulation**:
+   The Node.js test harnesses (`tests/test_reader_progress_restoration.py`, `tests/test_safari_fullscreen_restoration.py`, and `tests/test_local_image_retry.py`) verify DOM state transitions, overwrite prevention guards, token invalidation, layout-shift alignments, and lifecycle contracts without third-party dependencies. Specifically, `tests/test_local_image_retry.py` simulates the retry state machine and timing progression in Node.js rather than executing live image event handlers in a real browser. Practical testing on a mobile device over Tailscale has indicated that the fix successfully recovers from temporary network drops without manual intervention. However, extended network outages that exceed the cumulative ~7s retry window (1s + 2s + 4s) will exhaust automatic attempts, leaving the manual Retry button for user recovery. Not every possible browser-specific or exotic network failure scenario has been exhaustively tested, and ongoing real-browser validation across diverse engines and operating systems remains recommended.
 
 ---
 
@@ -871,7 +890,7 @@ When extending or maintaining this project, future developers and coding agents 
 5. **Always Sanitize User & Remote Strings**:
    Remote titles, chapter names, authors, and synopses are untrusted external data. Use `textContent` or escape HTML before inserting into the DOM to prevent XSS.
 6. **Maintain Complete Test Coverage**:
-   Any new endpoint, provider, or CLI feature must include regression tests. Ensure all 447 tests pass before finishing any task:
+   Any new endpoint, provider, or CLI feature must include regression tests. Ensure all 456 tests pass before finishing any task:
    ```bash
    python3 -m unittest discover -s tests -p "test_*.py" -v
    ```

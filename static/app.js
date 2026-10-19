@@ -393,6 +393,22 @@ document.addEventListener("DOMContentLoaded", () => {
   let lastFullscreenPosition = null;
   let isFullscreenRestoring = false;
 
+  // Local & remote page automatic retry state
+  const AUTO_RETRY_DELAYS = [1000, 2000, 4000];
+  const MAX_AUTO_RETRIES = 3;
+  let activeReaderRetryTimers = new Set();
+
+  function cancelActiveReaderRetries() {
+    activeReaderRetryTimers.forEach((timerId) => clearTimeout(timerId));
+    activeReaderRetryTimers.clear();
+  }
+
+  function getRetryUrl(baseUrl) {
+    const cleanUrl = baseUrl.replace(/([?&])_retry=\d+(&|$)/, (m, p1, p2) => (p2 === "&" ? p1 : ""));
+    const sep = cleanUrl.includes("?") ? "&" : "?";
+    return `${cleanUrl}${sep}_retry=${Date.now()}`;
+  }
+
   function cancelActiveRestoration() {
     isRestoringProgress = false;
     restorationFailedWithoutInteraction = false;
@@ -1861,6 +1877,7 @@ document.addEventListener("DOMContentLoaded", () => {
         readerObserver = null;
       }
       cancelActiveRestoration();
+      cancelActiveReaderRetries();
       if (saveProgressTimeout) {
         clearTimeout(saveProgressTimeout);
         saveProgressTimeout = null;
@@ -3908,6 +3925,7 @@ document.addEventListener("DOMContentLoaded", () => {
   async function loadReader(seriesName, chapterName) {
     const currentLoadToken = ++activeReaderLoadToken;
     cancelActiveRestoration();
+    cancelActiveReaderRetries();
 
     currentSeries = seriesName;
     currentChapter = chapterName;
@@ -4038,7 +4056,11 @@ document.addEventListener("DOMContentLoaded", () => {
           imgEl.decoding = "async";
         }
 
-        imgEl.onerror = () => {
+        let autoRetryCount = 0;
+        let retryTimeoutId = null;
+        let isLoaded = false;
+
+        function showManualRetryButton() {
           imgEl.classList.add("image-load-failed");
           let retryBtn = pageDiv.querySelector(".reader-image-retry");
           if (!retryBtn) {
@@ -4055,14 +4077,57 @@ document.addEventListener("DOMContentLoaded", () => {
             retryBtn.addEventListener("click", () => {
               retryBtn.remove();
               imgEl.classList.remove("image-load-failed");
-              const sep = img.url.includes("?") ? "&" : "?";
-              imgEl.src = `${img.url}${sep}_retry=${Date.now()}`;
+              autoRetryCount = 0;
+              isLoaded = false;
+              if (retryTimeoutId !== null) {
+                clearTimeout(retryTimeoutId);
+                activeReaderRetryTimers.delete(retryTimeoutId);
+                retryTimeoutId = null;
+              }
+              imgEl.src = getRetryUrl(img.url);
             });
             pageDiv.appendChild(retryBtn);
           }
+        }
+
+        imgEl.onerror = () => {
+          if (currentLoadToken !== activeReaderLoadToken) return;
+          if (isLoaded || (imgEl.complete && imgEl.naturalWidth > 0)) return;
+          if (retryTimeoutId !== null) return;
+
+          if (autoRetryCount < MAX_AUTO_RETRIES) {
+            const delay = AUTO_RETRY_DELAYS[autoRetryCount];
+            autoRetryCount++;
+
+            retryTimeoutId = setTimeout(() => {
+              activeReaderRetryTimers.delete(retryTimeoutId);
+              retryTimeoutId = null;
+
+              if (currentLoadToken !== activeReaderLoadToken) return;
+              if (isLoaded || (imgEl.complete && imgEl.naturalWidth > 0)) return;
+
+              imgEl.classList.remove("image-load-failed");
+              imgEl.src = getRetryUrl(img.url);
+            }, delay);
+
+            activeReaderRetryTimers.add(retryTimeoutId);
+            return;
+          }
+
+          showManualRetryButton();
         };
 
         imgEl.onload = () => {
+          if (currentLoadToken !== activeReaderLoadToken) return;
+
+          isLoaded = true;
+          autoRetryCount = 0;
+          if (retryTimeoutId !== null) {
+            clearTimeout(retryTimeoutId);
+            activeReaderRetryTimers.delete(retryTimeoutId);
+            retryTimeoutId = null;
+          }
+
           imgEl.classList.remove("image-load-failed");
           const retryBtn = pageDiv.querySelector(".reader-image-retry");
           if (retryBtn) retryBtn.remove();
